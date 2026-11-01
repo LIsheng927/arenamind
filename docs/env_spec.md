@@ -53,19 +53,27 @@ are part of the map.
 | shoot | 2: no / yes (ignored while on cooldown) |
 | dash | 2: no / yes (ignored while on cooldown) |
 
-## Observation (49 numbers, egocentric, roughly in [-1, 1])
+## Observation (49 numbers, egocentric)
 
-| Block | Size | Contents |
-|---|---|---|
-| self | 10 | HP, shoot cooldown, dash cooldown, velocity (forward, right), x, y, cos, sin of facing, time left |
-| opponent | 8 | visible flag, relative position (forward, right), distance, HP, relative velocity (forward, right), time since last seen |
-| rays | 16 | distance to the nearest wall or cover in 16 directions (max 10) |
-| enemy bullets | 3 x 5 | for the 3 nearest: present flag, relative position, relative velocity |
+Everything about other objects is given relative to the player: "forward"
+is along its facing, "right" is 90 degrees clockwise from it. The same
+situation therefore looks the same whichever way the player faces.
 
-When the opponent is hidden, its relative position is the last place it was
-seen, and "time since last seen" grows. Time left is included because the
-timeout rule makes the same picture call for different actions at second 5
-and second 58.
+| Block | Size | Contents | Scaling |
+|---|---|---|---|
+| self | 10 | HP, shoot cooldown, dash cooldown, velocity (forward, right), x, y, cos and sin of facing, time left | HP / 100, cooldowns / their length, velocity / 12 (dash speed), x and y / 20, time left / 60 s |
+| opponent | 8 | visible flag, position (forward, right), distance, HP, velocity (forward, right), time since last seen | positions / 20, velocity / 12, time / 10 s capped at 1 |
+| rays | 16 | distance to the nearest wall or cover, starting straight ahead and going clockwise | / 10, capped at 1 |
+| enemy bullets | 3 x 5 | for the 3 nearest bullets in line of sight: present flag, position (forward, right), velocity (forward, right) | positions / 20, velocity / 15; empty slots are all zeros |
+
+Hidden information:
+
+* The opponent's position is only updated while it is in line of sight.
+  Otherwise the observation shows where it was last seen and how long ago.
+  The policy has no memory of its own, so this is its memory.
+* Each player starts out knowing where the opponent spawned (part of the map).
+* The opponent's HP is always shown: a player knows how often it has hit.
+* Bullets behind cover are not shown.
 
 ## Reward
 
