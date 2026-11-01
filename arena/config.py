@@ -167,6 +167,11 @@ class GameConfig:
     def bullet_per_step(self) -> float:
         return self.weapon.bullet_speed * self.dt  # 1.5
 
+    @property
+    def dash_substeps(self) -> int:
+        """A dashing player makes this many normal-length moves per step."""
+        return round(self.dash.speed_multiplier)  # 3
+
     # ---- action space ---------------------------------------------------
     @property
     def action_sizes(self) -> tuple[int, int, int, int]:
@@ -216,7 +221,17 @@ def _validate(cfg: GameConfig) -> None:
             if math.hypot(sx - nx, sy - ny) < worst:
                 raise ValueError(f"spawn {(sx, sy)} is too close to obstacle {(x0, y0, x1, y1)}")
 
-    # 5. Enough bullet slots: firing non-stop must never need a 4th slot.
+    # 5. A single move is shorter than the player's radius, so a player can never
+    #    jump into cover in one move. A dash is split into several normal moves,
+    #    so its speed must be a whole multiple of the normal speed.
+    if cfg.move_per_step >= cfg.agent.radius:
+        raise ValueError(f"moving {cfg.move_per_step} per step is not shorter than "
+                         f"the player radius {cfg.agent.radius}")
+    m = cfg.dash.speed_multiplier
+    if m < 1 or abs(m - round(m)) > 1e-9:
+        raise ValueError(f"dash.speed_multiplier must be a whole number >= 1, got {m}")
+
+    # 6. Enough bullet slots: firing non-stop must never need a 4th slot.
     needed = math.ceil(cfg.bullet_lifetime_steps / cfg.shoot_cooldown_steps)
     if needed > cfg.weapon.max_bullets:
         raise ValueError(f"non-stop firing keeps {needed} bullets alive, "

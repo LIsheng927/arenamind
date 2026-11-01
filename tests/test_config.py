@@ -5,7 +5,9 @@ import pytest
 
 from arena.config import (
     MOVE_DIRECTIONS,
+    AgentConfig,
     ArenaConfig,
+    DashConfig,
     GameConfig,
     WeaponConfig,
     seconds_to_steps,
@@ -23,6 +25,7 @@ def test_default_config_derived_values():
     assert cfg.bullet_per_step == pytest.approx(1.5)
     assert cfg.obs.obs_dim == 49
     assert cfg.action_sizes == (9, 5, 2, 2)
+    assert cfg.dash_substeps == 3
 
 
 def test_move_directions_have_unit_length():
@@ -64,3 +67,13 @@ def test_config_is_read_only():
     cfg = GameConfig()
     with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.dt = 0.05
+
+
+def test_rejects_moves_longer_than_radius():
+    with pytest.raises(ValueError, match="radius"):
+        GameConfig(agent=AgentConfig(speed=6.0))  # 0.6 per step > radius 0.5
+
+
+def test_rejects_fractional_dash_multiplier():
+    with pytest.raises(ValueError, match="speed_multiplier"):
+        GameConfig(dash=DashConfig(speed_multiplier=2.5))
