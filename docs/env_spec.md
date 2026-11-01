@@ -23,8 +23,26 @@ Angle 0 faces +x; positive angles turn clockwise on screen.
 | End | a player reaches 0 HP, or time runs out (more HP wins; equal HP is a draw) | Avoids "both hide forever" |
 
 Both players' actions resolve in the same step, in this order:
-turn, move, collide, advance existing bullets (hits), fire new bullets,
-tick timers, check for the end, compute rewards, build observations.
+
+1. read both players' actions
+2. turn
+3. move (a dash is split into three normal-length moves), then push players
+   out of walls, cover and each other
+4. advance bullets already in flight; a bullet stops at the first thing on
+   its path this step (cover, wall or the opponent)
+5. fire new bullets; a new bullet starts flying on the next step
+6. tick timers
+7. check for the end of the game
+8. compute rewards
+9. update what each player has seen of the other
+
+Each stage handles both players before the next one starts, so neither player
+acts on fresher information than the other. A test plays every game against
+its 180-degree mirror image with the players swapped and checks that the
+results are mirrored exactly.
+
+Each player starts out knowing where the opponent spawned, since spawn points
+are part of the map.
 
 ## Actions (4 independent choices)
 
@@ -58,6 +76,13 @@ and second 58.
 | Each point of damage taken | -0.01 (one hit = -0.2) |
 
 The game is zero-sum: the two players' rewards always add up to 0.
+Damage is measured as HP actually lost, so overkill does not break this.
+
+The damage part never disagrees with the result. A player who wins by a kill
+dealt 100 damage and took at most 80; a player who wins on time has more HP
+left, so it took less damage than it dealt. A win is therefore always worth at
+least +1.2, a loss at most -1.2, and a draw exactly 0.
+
 The environment reports the outcome and damage parts separately in `info`,
 so training code can decay the damage part over time without changing the
 environment.
