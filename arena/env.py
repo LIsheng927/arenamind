@@ -17,8 +17,10 @@ step() advances every game by one tick (cfg.dt seconds) in a fixed order:
     9. update what each player has seen of the other
 
 Each stage handles both players together before the next stage starts, so
-neither player ever acts on fresher information than the other. Finished
-games are reset immediately, so callers can keep calling step() forever.
+neither player ever acts on fresher information than the other. By default
+finished games are reset immediately, so training code can keep calling
+step() forever; tools that want to show the final moment of a game pass
+auto_reset=False and call reset() themselves.
 """
 
 from __future__ import annotations
@@ -38,8 +40,9 @@ def wrap_angle(a: np.ndarray) -> np.ndarray:
 
 class ArenaEnv:
     def __init__(self, num_envs: int = 1, cfg: GameConfig = DEFAULT_CONFIG,
-                 seed: int | None = None) -> None:
+                 seed: int | None = None, auto_reset: bool = True) -> None:
         self.cfg = cfg
+        self.auto_reset = auto_reset
         self.num_envs = n = num_envs
         self.rng = np.random.default_rng(seed)
         k = cfg.weapon.max_bullets
@@ -118,7 +121,8 @@ class ArenaEnv:
                  (move, turn, shoot, dash) for each player of each game.
         Returns (reward, done, info):
             reward: (num_envs, 2) float
-            done:   (num_envs,) bool; games that finished were already reset
+            done:   (num_envs,) bool; with auto_reset, games that finished
+                    were already reset
             info:   per-step details, recorded before any reset
         """
         cfg = self.cfg
@@ -181,7 +185,7 @@ class ArenaEnv:
             "outcome": outcome,
             "episode_length": np.where(done, self.t, 0),
         }
-        if done.any():
+        if self.auto_reset and done.any():
             self._reset_games(done)
         return reward, done, info
 

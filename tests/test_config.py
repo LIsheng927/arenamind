@@ -9,6 +9,7 @@ from arena.config import (
     ArenaConfig,
     DashConfig,
     GameConfig,
+    ObsConfig,
     WeaponConfig,
     seconds_to_steps,
 )
@@ -77,3 +78,8 @@ def test_rejects_moves_longer_than_radius():
 def test_rejects_fractional_dash_multiplier():
     with pytest.raises(ValueError, match="speed_multiplier"):
         GameConfig(dash=DashConfig(speed_multiplier=2.5))
+
+
+def test_rejects_tracking_more_bullets_than_exist():
+    with pytest.raises(ValueError, match="tracked_bullets"):
+        GameConfig(obs=ObsConfig(tracked_bullets=4))

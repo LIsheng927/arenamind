@@ -75,6 +75,23 @@ def clamp_to_arena(pos: ArrayLike, radius: float, size: float) -> np.ndarray:
 # Ray vs rectangle (slab method): sensors, line of sight, bullets vs cover
 # ---------------------------------------------------------------------------
 
+def _slab(o: np.ndarray, d: np.ndarray, lo: np.ndarray, hi: np.ndarray):
+    """Interval of t for which o + t*d lies in [lo, hi], along one axis."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inv = 1.0 / d
+        t1 = (lo - o) * inv  # t at which the ray crosses lo
+        t2 = (hi - o) * inv  # t at which the ray crosses hi
+    near, far = np.minimum(t1, t2), np.maximum(t1, t2)
+    # A ray parallel to this axis never crosses lo or hi (the division above
+    # gives inf or nan). It is either inside the slab for every t, or never.
+    parallel = d == 0
+    if parallel.any():
+        inside = (o >= lo) & (o <= hi)
+        near = np.where(parallel, np.where(inside, -np.inf, np.inf), near)
+        far = np.where(parallel, np.where(inside, np.inf, -np.inf), far)
+    return near, far
+
+
 def ray_rect_distances(origins: ArrayLike, dirs: ArrayLike, rects: ArrayLike) -> np.ndarray:
     """Distance along each ray to the first point of each rectangle.
 
@@ -87,27 +104,13 @@ def ray_rect_distances(origins: ArrayLike, dirs: ArrayLike, rects: ArrayLike) ->
     It is inside the rectangle exactly when both hold, i.e. on the overlap
     [max(nears), min(fars)]. No overlap means a miss.
     """
-    o = np.asarray(origins, dtype=np.float64)[..., None, :]  # (..., 1, 2)
-    d = np.asarray(dirs, dtype=np.float64)[..., None, :]  # (..., 1, 2)
+    o = np.asarray(origins, dtype=np.float64)
+    d = np.asarray(dirs, dtype=np.float64)
     r = np.asarray(rects, dtype=np.float64).reshape(-1, 4)
-    lo, hi = r[:, :2], r[:, 2:]  # (K, 2): (x_min, y_min) and (x_max, y_max)
-
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t_lo = (lo - o) / d  # t at which the ray crosses x_min (and y_min)
-        t_hi = (hi - o) / d  # t at which the ray crosses x_max (and y_max)
-    near = np.minimum(t_lo, t_hi)
-    far = np.maximum(t_lo, t_hi)
-
-    # A ray parallel to an axis never crosses that slab's edges (division by
-    # zero above gives inf or nan). Either it is always inside the slab
-    # (slab = all t) or never (slab = empty).
-    parallel = d == 0
-    in_slab = (o >= lo) & (o <= hi)
-    near = np.where(parallel, np.where(in_slab, -np.inf, np.inf), near)
-    far = np.where(parallel, np.where(in_slab, np.inf, -np.inf), far)
-
-    t_enter = near.max(axis=-1)  # later of the two entries
-    t_exit = far.min(axis=-1)  # earlier of the two exits
+    near_x, far_x = _slab(o[..., 0, None], d[..., 0, None], r[:, 0], r[:, 2])
+    near_y, far_y = _slab(o[..., 1, None], d[..., 1, None], r[:, 1], r[:, 3])
+    t_enter = np.maximum(near_x, near_y)  # later of the two entries
+    t_exit = np.minimum(far_x, far_y)  # earlier of the two exits
     hit = (t_enter <= t_exit) & (t_exit >= 0)  # overlap exists and is not behind us
     return np.where(hit, np.maximum(t_enter, 0.0), np.inf)
 

@@ -231,7 +231,11 @@ def _validate(cfg: GameConfig) -> None:
     if m < 1 or abs(m - round(m)) > 1e-9:
         raise ValueError(f"dash.speed_multiplier must be a whole number >= 1, got {m}")
 
-    # 6. Enough bullet slots: firing non-stop must never need a 4th slot.
+    # 6. Observations can only show bullets that exist.
+    if cfg.obs.tracked_bullets > cfg.weapon.max_bullets:
+        raise ValueError("obs.tracked_bullets cannot exceed weapon.max_bullets")
+
+    # 7. Enough bullet slots: firing non-stop must never need a 4th slot.
     needed = math.ceil(cfg.bullet_lifetime_steps / cfg.shoot_cooldown_steps)
     if needed > cfg.weapon.max_bullets:
         raise ValueError(f"non-stop firing keeps {needed} bullets alive, "
