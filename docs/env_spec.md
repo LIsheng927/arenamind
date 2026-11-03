@@ -59,6 +59,11 @@ Everything about other objects is given relative to the player: "forward"
 is along its facing, "right" is 90 degrees clockwise from it. The same
 situation therefore looks the same whichever way the player faces.
 
+The only absolute numbers, the player's own x, y and facing, are written from
+its own side of the map: player 1 sees the map rotated by 180 degrees. Because
+the map is point-symmetric, both players get identical observations in
+mirrored situations, so a policy trained as one player can play as the other.
+
 | Block | Size | Contents | Scaling |
 |---|---|---|---|
 | self | 10 | HP, shoot cooldown, dash cooldown, velocity (forward, right), x, y, cos and sin of facing, time left | HP / 100, cooldowns / their length, velocity / 12 (dash speed), x and y / 20, time left / 60 s |

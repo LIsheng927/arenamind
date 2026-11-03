@@ -97,17 +97,23 @@ def test_bullets_behind_cover_are_not_shown():
 
 
 def test_observations_do_not_depend_on_which_side_you_are():
-    """Mirror the map and swap players: everything relative stays identical."""
+    """Mirror the map and swap players: every observation is identical.
+
+    This is what lets a policy trained as blue play as orange.
+    """
     env = ArenaEnv(16, seed=2)
     rng = np.random.default_rng(3)
     for _ in range(40):
         env.step(random_actions(rng, 16))
     a, b = observe(env), observe(mirrored_copy(env))[:, ::-1]
-    absolute = [5, 6, 7, 8]  # x, y, cos, sin are on the map, so they mirror
-    relative = [i for i in range(CFG.obs.obs_dim) if i not in absolute]
-    assert np.allclose(a[..., relative], b[..., relative], atol=1e-5)
-    assert np.allclose(a[..., [5, 6]], 1 - b[..., [5, 6]], atol=1e-5)
-    assert np.allclose(a[..., [7, 8]], -b[..., [7, 8]], atol=1e-5)
+    assert np.allclose(a, b, atol=1e-5)
+
+
+def test_both_players_see_their_own_spawn_the_same_way():
+    env = ArenaEnv(1, seed=0)
+    own = observe(env)[0, :, SELF][:, 5:7] * S  # own x, y as each player sees it
+    assert np.allclose(own[0], own[1], atol=1.0)  # both near (3, 17), within spawn jitter
+    assert np.allclose(own, [[3.0, 17.0], [3.0, 17.0]], atol=0.75)
 
 
 def test_time_left_counts_down():

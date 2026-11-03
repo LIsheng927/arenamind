@@ -10,7 +10,12 @@ player's point of view:
       because the policy has no memory of its own;
     * bullets are only shown if the player has line of sight to them;
     * every number is divided by a typical maximum, so all inputs have a
-      similar size (roughly -1 to 1).
+      similar size (roughly -1 to 1);
+    * the only absolute numbers (own x, y and facing) are written from each
+      player's own side of the map: player 1 sees the map rotated by 180
+      degrees. The map is point-symmetric, so both players then get exactly
+      the same observations in mirrored situations, and a policy trained as
+      one player can play as the other.
 
 Layout (block sizes come from ObsConfig, 49 numbers in total):
 
@@ -49,6 +54,11 @@ def observe(env) -> np.ndarray:
 
     # --- self ----------------------------------------------------------------
     vf, vr = to_local(env.vel, cos, sin)
+    # Own position and facing as seen from this player's side of the map.
+    flip = np.array([False, True])  # player 1 sees the map rotated 180 degrees
+    own_x = np.where(flip, size - me[..., 0], me[..., 0]) / size
+    own_y = np.where(flip, size - me[..., 1], me[..., 1]) / size
+    own_cos, own_sin = np.where(flip, -cos, cos), np.where(flip, -sin, sin)
     time_left = (cfg.max_steps - env.t) / cfg.max_steps
     own = np.stack([
         env.hp / cfg.agent.max_hp,
@@ -56,10 +66,10 @@ def observe(env) -> np.ndarray:
         env.dash_cd / cfg.dash_cooldown_steps,
         vf / max_speed,
         vr / max_speed,
-        me[..., 0] / size,
-        me[..., 1] / size,
-        cos,
-        sin,
+        own_x,
+        own_y,
+        own_cos,
+        own_sin,
         np.broadcast_to(time_left[:, None], (n, 2)),
     ], axis=-1)
 
