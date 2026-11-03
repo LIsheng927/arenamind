@@ -3,8 +3,9 @@
     python -m tools.play --opponent rule
     python -m tools.play --record recordings/me.npz   # save your games
 
-Keys: W A S D move (screen directions), mouse aims, left click or Space
-shoots, Shift or right click dashes, Esc quits.
+Keys: W A S D or the arrow keys move (screen directions), mouse aims, left
+click or Space shoots, Shift or right click dashes, Esc quits. Click the
+game window first so it receives the keyboard.
 
 Your input goes through exactly the same action choices a policy has: you
 can turn at most 30 degrees per step and move in 8 directions relative to
@@ -20,9 +21,10 @@ from pathlib import Path
 import numpy as np
 import pygame
 
-from arena.bots import BOTS, move_towards, turn_towards
+from arena.bots import move_towards, turn_towards
 from arena.env import ArenaEnv, wrap_angle
 from arena.obs import observe
+from tools.bot_spec import HELP, make_bot
 from tools.window import open_window, show
 
 RESULT = {1: "you win", -1: "you lose", 0: "draw"}
@@ -36,8 +38,11 @@ def human_action(env, mouse_xy, keys, buttons, scale: int) -> np.ndarray:
     turn = int(turn_towards(np.array(wrap_angle(aim - angle)), cfg.agent.turn_degrees))
     new_angle = angle + np.radians(cfg.agent.turn_degrees[turn])
 
-    dx = float(keys[pygame.K_d]) - float(keys[pygame.K_a])
-    dy = float(keys[pygame.K_s]) - float(keys[pygame.K_w])
+    right = keys[pygame.K_d] or keys[pygame.K_RIGHT]
+    left = keys[pygame.K_a] or keys[pygame.K_LEFT]
+    down = keys[pygame.K_s] or keys[pygame.K_DOWN]
+    up = keys[pygame.K_w] or keys[pygame.K_UP]
+    dx, dy = float(right) - float(left), float(down) - float(up)
     move = 0
     if dx or dy:
         move = int(move_towards(np.array(wrap_angle(np.arctan2(dy, dx) - new_angle))))
@@ -49,7 +54,7 @@ def human_action(env, mouse_xy, keys, buttons, scale: int) -> np.ndarray:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--opponent", choices=sorted(BOTS), default="rule")
+    parser.add_argument("--opponent", default="rule", help=HELP)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--scale", type=int, default=32, help="pixels per arena unit")
     parser.add_argument("--record", type=Path, help="save your observations and actions here")
@@ -57,8 +62,9 @@ def main() -> None:
     args = parser.parse_args()
 
     env = ArenaEnv(1, seed=args.seed, auto_reset=False)
-    bot = BOTS[args.opponent](env, 1, args.seed + 1)
-    screen = open_window(env, args.scale, f"ArenaMind: you vs {args.opponent}")
+    bot = make_bot(args.opponent, env, 1, args.seed + 1)
+    screen = open_window(env, args.scale, f"ArenaMind: you vs {args.opponent} "
+                                         "(WASD or arrows move, mouse aims, click shoots, Shift dashes)")
     clock = pygame.time.Clock()
     step_seconds = env.cfg.dt  # the game runs in real time: 10 steps per second
 

@@ -46,6 +46,22 @@ class RandomBot:
         pass
 
 
+class IdleBot:
+    """Stands still and never shoots: a sitting target, for checking that a
+    trained policy can find and finish an opponent that does not come to it."""
+
+    def __init__(self, env: ArenaEnv, player: int, seed: int | None = None) -> None:
+        self.player = player
+
+    def act(self, env: ArenaEnv) -> np.ndarray:
+        actions = np.zeros((env.num_envs, 4), dtype=np.int64)
+        actions[:, 1] = 2  # no turn
+        return actions
+
+    def on_done(self, env: ArenaEnv, done: np.ndarray) -> None:
+        pass
+
+
 def turn_towards(diff: np.ndarray, turn_degrees: tuple[float, ...]) -> np.ndarray:
     """Pick the turn choice that brings the facing closest to `diff` radians away."""
     turns = np.radians(np.array(turn_degrees))
@@ -166,6 +182,7 @@ class RuleBot:
 BOTS: dict[str, Callable[[ArenaEnv, int, int | None], object]] = {
     "random": RandomBot,
     "rule": RuleBot,
+    "idle": IdleBot,
 }
 
 

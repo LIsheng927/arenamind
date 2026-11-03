@@ -10,15 +10,15 @@ from pathlib import Path
 
 import numpy as np
 
-from arena.bots import BOTS
 from arena.env import ArenaEnv
 from arena.render import render
+from tools.bot_spec import HELP, make_bot
 
 
 def record(blue: str, orange: str, seed: int, max_steps: int, scale: int,
            rays: bool) -> list:
     env = ArenaEnv(1, seed=seed, auto_reset=False)  # keep the final moment on screen
-    bots = [BOTS[blue](env, 0, seed + 1), BOTS[orange](env, 1, seed + 2)]
+    bots = [make_bot(blue, env, 0, seed + 1), make_bot(orange, env, 1, seed + 2)]
     ray_player = 0 if rays else None
     frames = [render(env, scale=scale, rays_for=ray_player)]
     for _ in range(max_steps):
@@ -36,8 +36,8 @@ def record(blue: str, orange: str, seed: int, max_steps: int, scale: int,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--blue", choices=sorted(BOTS), default="rule")
-    parser.add_argument("--orange", choices=sorted(BOTS), default="rule")
+    parser.add_argument("--blue", default="rule", help=HELP)
+    parser.add_argument("--orange", default="rule", help=HELP)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-steps", type=int, default=600)
     parser.add_argument("--scale", type=int, default=20, help="pixels per arena unit")

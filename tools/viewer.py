@@ -13,8 +13,8 @@ import argparse
 import numpy as np
 import pygame
 
-from arena.bots import BOTS
 from arena.env import ArenaEnv
+from tools.bot_spec import HELP, make_bot
 from tools.window import open_window, show
 
 RESULT = {1: "blue wins", -1: "orange wins", 0: "draw"}
@@ -22,8 +22,8 @@ RESULT = {1: "blue wins", -1: "orange wins", 0: "draw"}
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--blue", choices=sorted(BOTS), default="rule")
-    parser.add_argument("--orange", choices=sorted(BOTS), default="rule")
+    parser.add_argument("--blue", default="rule", help=HELP)
+    parser.add_argument("--orange", default="rule", help=HELP)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--scale", type=int, default=32, help="pixels per arena unit")
     parser.add_argument("--speed", type=float, default=10.0, help="game steps per second")
@@ -31,7 +31,7 @@ def main() -> None:
     args = parser.parse_args()
 
     env = ArenaEnv(1, seed=args.seed, auto_reset=False)
-    bots = [BOTS[args.blue](env, 0, args.seed + 1), BOTS[args.orange](env, 1, args.seed + 2)]
+    bots = [make_bot(args.blue, env, 0, args.seed + 1), make_bot(args.orange, env, 1, args.seed + 2)]
     screen = open_window(env, args.scale, f"ArenaMind: {args.blue} vs {args.orange}")
     clock = pygame.time.Clock()
 

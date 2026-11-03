@@ -11,7 +11,12 @@ def open_window(env, scale: int, title: str):
     pygame.init()
     pygame.display.set_caption(title)
     first = render(env, scale=scale)
-    return pygame.display.set_mode(first.size)
+    screen = pygame.display.set_mode(first.size)
+    # With text input on, an input method (e.g. a Chinese IME) can swallow
+    # letter keys such as WASD. The tools only need raw key states.
+    if hasattr(pygame.key, "stop_text_input"):
+        pygame.key.stop_text_input()
+    return screen
 
 
 def show(screen, env, scale: int, **kwargs) -> None:

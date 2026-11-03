@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from arena.bots import (
-    BACK, FORWARD, FWD_RIGHT, LEFT, RIGHT, RandomBot, RuleBot,
+    BACK, FORWARD, FWD_RIGHT, LEFT, RIGHT, IdleBot, RandomBot, RuleBot,
     move_towards, play_matches, turn_towards,
 )
 from arena.config import GameConfig
@@ -24,7 +24,7 @@ def test_move_towards_picks_the_closest_direction():
     assert move_towards(angles).tolist() == [FORWARD, FWD_RIGHT, RIGHT, BACK, LEFT, FORWARD]
 
 
-@pytest.mark.parametrize("bot", [RandomBot, RuleBot])
+@pytest.mark.parametrize("bot", [RandomBot, RuleBot, IdleBot])
 def test_bots_produce_valid_actions(bot):
     env = ArenaEnv(16, seed=0)
     bots = [bot(env, 0, 1), bot(env, 1, 2)]
@@ -46,3 +46,27 @@ def test_rule_bot_against_itself_is_even():
     r = play_matches("rule", "rule", 400, seed=0)
     decided = r["wins"] + r["losses"]
     assert 0.4 <= r["wins"] / decided <= 0.6
+
+
+def test_bot_spec_builds_builtin_bots_and_rejects_unknown_names():
+    from tools.bot_spec import make_bot
+    env = ArenaEnv(2, seed=0)
+    assert isinstance(make_bot("rule", env, 1, 0), RuleBot)
+    assert isinstance(make_bot("random", env, 0, 0), RandomBot)
+    with pytest.raises(SystemExit):
+        make_bot("nonsense", env, 0, 0)
+
+
+def test_idle_bot_never_moves_or_shoots():
+    env = ArenaEnv(4, seed=0)
+    bot = IdleBot(env, 1)
+    start = env.pos[:, 1].copy()
+    for _ in range(50):
+        env.step(np.stack([np.tile([0, 2, 0, 0], (4, 1)), bot.act(env)], axis=1))
+    assert np.allclose(env.pos[:, 1], start)
+    assert not env.bullet_alive[:, 1].any()
+
+
+def test_rule_bot_finds_and_beats_a_sitting_target():
+    r = play_matches("rule", "idle", 100, seed=0)
+    assert r["wins"] == r["games"]
