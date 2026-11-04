@@ -182,9 +182,11 @@ evaluation):
 
 ![Exploiter scores during training](docs/stage2_exploiters.png)
 
-Exploiter 1 found a cheap trick: land one hit, then stay out of reach until
-the time runs out. 68% of its games were draws, and it scored only 13% against
-the rule bot: no good as a fighter, only as a counter to one opponent. Self-play 2 learned to punish the trick within 1.7 million steps:
+Exploiter 1 found a cheap trick: keep its distance, because self-play 1 did
+not come after it. 68% of its games ended level at the 60-second limit (a
+draw), and when it landed the first hit it kept away and won on HP. It scored
+only 13% against the rule bot: no good as a fighter, only as a counter to one
+opponent. Self-play 2 learned to punish the trick within 1.7 million steps:
 its win rate against exploiter 1 went from 16% to 100%. Exploiter 2 found no
 such shortcut. To score at all it had to learn to fight, which made it a
 real fighter (72.5% against the rule bot), and it still never got above 23%.
