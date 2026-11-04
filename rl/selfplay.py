@@ -9,7 +9,7 @@
     # the main policy again, now also facing the exploiter, keeping its old pool
     python -m rl.selfplay --name selfplay2 --steps 30000000 --init runs/selfplay/model.pt \
         --seed-pool runs/selfplay/pool --fixed runs/exploiter1/model.pt --p-fixed 0.2 \
-        --reference runs/selfplay/model.pt
+        --p-rule 0.15 --p-latest 0.4 --reference runs/selfplay/model.pt
 
 Training against one fixed bot teaches a policy that bot's habits (stage 1:
 99% against the rule bot, 9% against the camper bot). Here the opponents come
@@ -30,9 +30,10 @@ from a pool that grows as the policy improves:
 
 Each game draws its slot when it starts (p_rule, p_latest and p_fixed; the
 rest is shared by the past slots). `seed_pool` loads the snapshots of an
-earlier run into the pool, so a continued run keeps its history. A game in progress keeps its slot when the pool is refreshed,
-so it may switch to a newer copy halfway through; that happens at most once
-every `snapshot_every` iterations.
+earlier run into the pool, so a continued run keeps its history. A game in
+progress keeps its slot when the pool is refreshed, so it may switch to a
+newer copy halfway through; that happens at most once every `snapshot_every`
+iterations.
 
 Every snapshot is saved to runs/<name>/pool/ for the league to rate later.
 Every `eval_every` iterations the current policy also plays fixed reference
