@@ -191,7 +191,38 @@ its win rate against exploiter 1 went from 16% to 100%. Exploiter 2 found no
 such shortcut. To score at all it had to learn to fight, which made it a
 real fighter (72.5% against the rule bot), and it still never got above 23%.
 
-What these numbers do not show:
+### Ablation: the exploiter, or just more training?
+
+Self-play 2 differs from self-play 1 in two ways: exploiter 1 in its pool and
+30 million more training steps. A third run, `selfplay2_noexp`, has the extra
+steps but no exploiter. It has the same start, old snapshots and step count;
+exploiter 1's 20% of games is shared out in the same proportions as the rest
+(rule bot 18.75%, latest copy 50%, older copies 31.25%).
+
+The test was fixed before the run. If exploiter 1 scores at least 20 points
+more against the run without it than against self-play 2, the exploiter is
+what removed the weakness. Within 8 points, extra training alone would have
+done it.
+
+| Score in one league (400 games per pair) | Self-play 1 | Self-play 2 without exploiter | Self-play 2 |
+|---|---|---|---|
+| exploiter 1 against it | 53% | **49%** | **0%** |
+| it against the rusher | 35% | 62% | 84% |
+| it against the camper | 79% | 96% | 96% |
+| it against the flanker | 95% | 100% | 100% |
+| it against the rule bot | 98% | 100% | 100% |
+
+Extra training alone did nothing for the weakness that exploiter 1 found: it
+still scores 49% against the run without it, within noise of its 53% against
+self-play 1, and 0% against self-play 2. So the exploiter is what fixed it.
+The gains against the camper and the flanker came from the extra training,
+since both runs reach the same scores there. Self-play 2 also beat the rusher
+far more often (84% against 62% here, and 80.9% against 64.7% over 1000 games
+each with `rl.evaluate`), but with one run of each this could be down to
+chance in training. More seeds are needed before it can be credited to the
+exploiter. Head to head the two runs are even (53%).
+
+### What these numbers do not show
 
 * The test bots share the rule bot's aim, so they test different movement,
   not different players. Human play is a harder test.
@@ -203,10 +234,9 @@ What these numbers do not show:
   Starting the exploiter from the target's weights would be a stricter test.
 * Every run was trained once, with one random seed, so it is unknown how much
   a second run would differ.
-* Self-play 2 differs from self-play 1 in two ways at once: exploiter 1 in
-  its pool, and 30 million more training steps. Without a run that has the
-  extra steps but no exploiter, the gain cannot be put down to the exploiter
-  alone.
+* Ratings from different leagues cannot be compared. Self-play 2 rates 1505
+  in the league above and 1413 in the ablation league, which has exploiter 1
+  in it and not the stage-1 policy.
 * Matchups are not transitive. The rusher scores only 16% against the rule
   bot but 65% against the stage-1 policy and self-play 1. Elo squeezes this
   into one number per player, and the numbers depend on who is in the
@@ -220,8 +250,10 @@ python -m rl.selfplay --name selfplay --steps 40000000 --reference runs/first/mo
 python -m rl.selfplay --name exploiter1 --steps 20000000 --fixed runs/selfplay/model.pt --p-fixed 1 --p-rule 0 --p-latest 0 --reference runs/selfplay/model.pt
 python -m rl.selfplay --name selfplay2 --steps 30000000 --init runs/selfplay/model.pt --seed-pool runs/selfplay/pool --fixed runs/exploiter1/model.pt --p-fixed 0.2 --p-rule 0.15 --p-latest 0.4 --reference runs/selfplay/model.pt
 python -m rl.selfplay --name exploiter2 --steps 20000000 --fixed runs/selfplay2/model.pt --p-fixed 1 --p-rule 0 --p-latest 0 --reference runs/selfplay2/model.pt
+python -m rl.selfplay --name selfplay2_noexp --steps 30000000 --init runs/selfplay/model.pt --seed-pool runs/selfplay/pool --p-rule 0.1875 --p-latest 0.5 --reference runs/selfplay/model.pt
 python -m rl.evaluate runs/selfplay2/model.pt --opponent rule camper rusher kiter idle flanker
 python -m rl.league rule kiter rusher camper flanker random ppo:runs/first/model.pt ppo:runs/selfplay/model.pt ppo:runs/selfplay2/model.pt
+python -m rl.league rule camper rusher kiter flanker random ppo:runs/exploiter1/model.pt ppo:runs/selfplay/model.pt ppo:runs/selfplay2/model.pt ppo:runs/selfplay2_noexp/model.pt
 python -m tools.plot_logs "vs self-play 1=runs/exploiter1/log.csv:eval_reference" "vs self-play 2=runs/exploiter2/log.csv:eval_reference" --percent --mark 0.5:even
 ```
 
