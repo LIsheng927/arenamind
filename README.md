@@ -198,7 +198,15 @@ What these numbers do not show:
 * The camper, rusher and kiter results were looked at while deciding what to
   train next, so only the flanker was truly unseen until the end.
 * An exploiter's score is a lower bound: a longer run or another method might
-  find more.
+  find more. Copying the target already scores 50%, so a score below 50%
+  (exploiter 2) shows that no shortcut was found, not that none exists.
+  Starting the exploiter from the target's weights would be a stricter test.
+* Every run was trained once, with one random seed, so it is unknown how much
+  a second run would differ.
+* Self-play 2 differs from self-play 1 in two ways at once: exploiter 1 in
+  its pool, and 30 million more training steps. Without a run that has the
+  extra steps but no exploiter, the gain cannot be put down to the exploiter
+  alone.
 * Matchups are not transitive. The rusher scores only 16% against the rule
   bot but 65% against the stage-1 policy and self-play 1. Elo squeezes this
   into one number per player, and the numbers depend on who is in the
