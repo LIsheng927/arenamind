@@ -11,6 +11,11 @@ RuleBot is classic hand-written game AI: chase, aim, strafe, dodge. It is the
 first opponent a trained policy has to beat, and a fixed yardstick later on.
 It only uses what a player could know: its own state, whether it can see the
 opponent, where it last saw it, and bullets in its line of sight.
+
+CamperBot, RusherBot and KiterBot aim and shoot like RuleBot but move in
+other ways (hold a spot, charge in, keep away). A policy trained only against
+RuleBot has never seen them, so they show whether it learned to fight or only
+learned RuleBot's habits.
 """
 
 from __future__ import annotations
@@ -110,12 +115,20 @@ class RuleBot:
         self.prev_pos[idx] = env.pos[idx, self.player]
 
     def act(self, env: ArenaEnv) -> np.ndarray:
-        cfg, p, n = self.cfg, self.player, env.num_envs
+        # Three parts, so that other bots can reuse the first two and only
+        # change how they move: what do I know, where do I aim, where do I go.
+        s = self._sense(env)
+        turn, shoot = self._aim(s)
+        move, dash = self._move(env, s)
+        return np.stack([move, turn, shoot.astype(np.int64), dash.astype(np.int64)], axis=-1)
+
+    def _sense(self, env: ArenaEnv) -> dict:
+        """Update memory and pick the point to look at; returns what the other parts need."""
+        p = self.player
         me, angle = env.pos[:, p], env.angle[:, p]
         visible = env.visible
         last_seen = env.last_seen[:, p]
 
-        # --- memory: what am I heading for? ---------------------------------
         self.seen_for = np.where(visible, self.seen_for + 1, 0)
         self.patrolling &= ~visible
         moved = np.linalg.norm(me - self.prev_pos, axis=-1)
@@ -130,40 +143,46 @@ class RuleBot:
         self.goal[k] = PATROL_POINTS[self.rng.integers(len(PATROL_POINTS), size=k.size)]
         self.stuck[k] = 0
 
-        target = np.where(visible[:, None], env.pos[:, 1 - p],
-                          np.where(self.patrolling[:, None], self.goal, last_seen))
+        target = self._target(env, visible, last_seen)
         rel = target - me
-        dist = np.linalg.norm(rel, axis=-1)
-        want = np.arctan2(rel[:, 1], rel[:, 0])
+        return {"me": me, "angle": angle, "visible": visible,
+                "dist": np.linalg.norm(rel, axis=-1), "want": np.arctan2(rel[:, 1], rel[:, 0])}
 
-        # --- aim -----------------------------------------------------------------
-        turn = turn_towards(wrap_angle(want - angle), cfg.agent.turn_degrees)
-        new_angle = angle + np.radians(np.array(cfg.agent.turn_degrees))[turn]
-        aim_error = np.abs(wrap_angle(want - new_angle))
-        shoot = visible & (aim_error < self.AIM_TOLERANCE) & (self.seen_for >= self.REACTION_STEPS)
+    def _target(self, env: ArenaEnv, visible: np.ndarray, last_seen: np.ndarray) -> np.ndarray:
+        """The opponent while visible; otherwise where it was last seen, then patrol points."""
+        return np.where(visible[:, None], env.pos[:, 1 - self.player],
+                        np.where(self.patrolling[:, None], self.goal, last_seen))
 
-        # --- move ----------------------------------------------------------------
+    def _aim(self, s: dict) -> tuple[np.ndarray, np.ndarray]:
+        """Turn towards the target; shoot once it has been in view long enough and is lined up."""
+        turns = self.cfg.agent.turn_degrees
+        turn = turn_towards(wrap_angle(s["want"] - s["angle"]), turns)
+        s["new_angle"] = s["angle"] + np.radians(np.array(turns))[turn]
+        aim_error = np.abs(wrap_angle(s["want"] - s["new_angle"]))
+        shoot = s["visible"] & (aim_error < self.AIM_TOLERANCE) & (self.seen_for >= self.REACTION_STEPS)
+        return turn, shoot
+
+    def _move(self, env: ArenaEnv, s: dict) -> tuple[np.ndarray, np.ndarray]:
+        visible, dist = s["visible"], s["dist"]
         # Fighting: strafe sideways, switching sides now and then, and keep a
         # middle distance. Otherwise: walk towards the target.
         self.side_timer = np.where(visible, self.side_timer - 1, self.side_timer)
         flip = visible & (self.side_timer <= 0)
         self.side = np.where(flip, -self.side, self.side)
-        self.side_timer = np.where(flip, self.rng.integers(8, 15, size=n), self.side_timer)
+        self.side_timer = np.where(flip, self.rng.integers(8, 15, size=env.num_envs), self.side_timer)
         right = self.side > 0
         strafe = np.where(right, RIGHT, LEFT)
         strafe = np.where(dist < self.TOO_CLOSE, np.where(right, BACK_RIGHT, BACK_LEFT), strafe)
         strafe = np.where(dist > self.TOO_FAR, np.where(right, FWD_RIGHT, FWD_LEFT), strafe)
-        walk = move_towards(wrap_angle(want - new_angle))
+        walk = move_towards(wrap_angle(s["want"] - s["new_angle"]))
         move = np.where(visible, strafe, walk)
 
-        # --- dodge -----------------------------------------------------------------
         # A visible enemy bullet that would touch me within the next two steps:
         # dash sideways if the dash is ready, otherwise just sidestep.
-        danger = self._danger(env, me)
+        danger = self._danger(env, s["me"])
         move = np.where(danger, np.where(right, RIGHT, LEFT), move)
-        dash = danger & (env.dash_cd[:, p] == 0)
-
-        return np.stack([move, turn, shoot.astype(np.int64), dash.astype(np.int64)], axis=-1)
+        dash = danger & (env.dash_cd[:, self.player] == 0)
+        return move, dash
 
     def _danger(self, env: ArenaEnv, me: np.ndarray) -> np.ndarray:
         cfg, q = self.cfg, 1 - self.player
@@ -179,10 +198,67 @@ class RuleBot:
         return (alive & incoming & in_sight).any(axis=-1)
 
 
+# --- Opponents with other play styles ------------------------------------------
+# They see, aim and shoot exactly like RuleBot and only move differently, so a
+# policy that beats RuleBot but loses to one of these has learned that bot's
+# habits rather than how to fight.
+
+class CamperBot(RuleBot):
+    """Holds its spawn point: turns towards where it last saw the opponent and
+    shoots, sidesteps incoming bullets, then walks back to its spot."""
+
+    HOME_RADIUS = 0.8  # close enough to its spot to stand still
+
+    def _forget(self, mask: np.ndarray, env: ArenaEnv) -> None:
+        super()._forget(mask, env)
+        if not hasattr(self, "home"):
+            self.home = np.zeros((env.num_envs, 2))
+        self.home[mask] = env.pos[mask, self.player]
+
+    def _target(self, env: ArenaEnv, visible: np.ndarray, last_seen: np.ndarray) -> np.ndarray:
+        # Never patrols: keeps watching the last known position.
+        return np.where(visible[:, None], env.pos[:, 1 - self.player], last_seen)
+
+    def _move(self, env: ArenaEnv, s: dict) -> tuple[np.ndarray, np.ndarray]:
+        to_home = self.home - s["me"]
+        away = np.linalg.norm(to_home, axis=-1) > self.HOME_RADIUS
+        home_dir = np.arctan2(to_home[:, 1], to_home[:, 0])
+        move = np.where(away, move_towards(wrap_angle(home_dir - s["new_angle"])), STAY)
+        danger = self._danger(env, s["me"])
+        move = np.where(danger, np.where(self.side > 0, RIGHT, LEFT), move)
+        dash = danger & (env.dash_cd[:, self.player] == 0)
+        return move, dash
+
+
+class RusherBot(RuleBot):
+    """Charges straight at the opponent and dashes to close the distance.
+    Never strafes or keeps its distance, but still sidesteps bullets."""
+
+    DASH_RANGE = 6.0  # dash towards a visible opponent further away than this
+
+    def _move(self, env: ArenaEnv, s: dict) -> tuple[np.ndarray, np.ndarray]:
+        move = move_towards(wrap_angle(s["want"] - s["new_angle"]))
+        danger = self._danger(env, s["me"])
+        move = np.where(danger, np.where(self.side > 0, RIGHT, LEFT), move)
+        charge = s["visible"] & (s["dist"] > self.DASH_RANGE)
+        dash = (danger | charge) & (env.dash_cd[:, self.player] == 0)
+        return move, dash
+
+
+class KiterBot(RuleBot):
+    """Fights from long range: backs away when the opponent comes closer than
+    10 units and only moves in when it is further than 14."""
+
+    TOO_CLOSE, TOO_FAR = 10.0, 14.0
+
+
 BOTS: dict[str, Callable[[ArenaEnv, int, int | None], object]] = {
     "random": RandomBot,
     "rule": RuleBot,
     "idle": IdleBot,
+    "camper": CamperBot,
+    "rusher": RusherBot,
+    "kiter": KiterBot,
 }
 
 
