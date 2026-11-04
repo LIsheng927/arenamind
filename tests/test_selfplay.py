@@ -71,3 +71,64 @@ def test_tiny_selfplay_run_completes(tmp_path):
     assert len(rows) == 4  # header + 3 iterations
     for name in ["eval_rule", "eval_reference", "entropy", "approx_kl"]:
         assert np.isfinite(float(last[header.index(name)]))
+
+
+def saved_tiny_model(path):
+    save_checkpoint(path, tiny_model(), PPOConfig(hidden=32), step=0)
+    return str(path)
+
+
+def test_fixed_opponents_get_their_share_and_never_change(tmp_path):
+    fixed = saved_tiny_model(tmp_path / "fixed.pt")
+    env = ArenaEnv(4000, seed=3)
+    cfg = SelfPlayConfig(hidden=32, p_rule=0.1, p_latest=0.4, p_fixed=0.3, past_slots=2,
+                         fixed=(fixed,))
+    pool = OpponentPool(env, cfg, tiny_model(), np.random.default_rng(3))
+    kinds = [pool.kind(g) for g in range(env.num_envs)]
+    for kind, share in [("rule", 0.1), ("latest", 0.4), ("past", 0.2), ("fixed", 0.3)]:
+        assert abs(kinds.count(kind) / env.num_envs - share) < 0.03
+    before = pool.models[-1].actor[0].weight.clone()
+    newer = tiny_model()
+    with torch.no_grad():
+        for p in newer.parameters():
+            p.add_(1.0)
+    pool.add(newer)  # refreshes the copies of the policy...
+    assert torch.equal(pool.models[0].actor[0].weight, newer.actor[0].weight)
+    assert torch.equal(pool.models[-1].actor[0].weight, before)  # ...but not the fixed opponent
+
+
+def test_an_exploiter_plays_nothing_but_its_fixed_opponent(tmp_path):
+    fixed = saved_tiny_model(tmp_path / "main.pt")
+    env = ArenaEnv(500, seed=4)
+    cfg = SelfPlayConfig(hidden=32, p_rule=0.0, p_latest=0.0, p_fixed=1.0, fixed=(fixed,))
+    pool = OpponentPool(env, cfg, tiny_model(), np.random.default_rng(4))
+    assert {pool.kind(g) for g in range(env.num_envs)} == {"fixed"}
+    pool.on_done(env, np.ones(env.num_envs, dtype=bool))  # new games: still only the fixed one
+    assert {pool.kind(g) for g in range(env.num_envs)} == {"fixed"}
+
+
+def test_a_fixed_share_needs_a_fixed_opponent():
+    with pytest.raises(ValueError):
+        OpponentPool(ArenaEnv(4, seed=0), SelfPlayConfig(hidden=32, p_fixed=0.2), tiny_model(),
+                     np.random.default_rng(0))
+
+
+def test_seed_pool_starts_with_an_earlier_runs_snapshots(tmp_path):
+    folder = tmp_path / "pool"
+    for i in range(3):
+        saved_tiny_model(folder / f"iter_{i:05d}.pt")
+    cfg = SelfPlayConfig(hidden=32, seed_pool=str(folder))
+    pool = OpponentPool(ArenaEnv(8, seed=5), cfg, tiny_model(), np.random.default_rng(5))
+    assert len(pool.snapshots) == 4  # three loaded + the current policy
+
+
+def test_tiny_exploiter_run_completes(tmp_path):
+    main = saved_tiny_model(tmp_path / "main.pt")
+    cfg = SelfPlayConfig(total_steps=2 * 16 * 32, num_envs=16, rollout_steps=32, epochs=1,
+                         minibatch_size=128, hidden=32, device="cpu", eval_every=1, eval_games=8,
+                         p_rule=0.0, p_latest=0.0, p_fixed=1.0, fixed=(main,), reference=main)
+    train_selfplay(cfg, tmp_path / "exploiter")
+    rows = (tmp_path / "exploiter" / "log.csv").read_text().strip().splitlines()
+    header, last = rows[0].split(","), rows[-1].split(",")
+    assert np.isfinite(float(last[header.index("eval_reference")]))
+    assert float(last[header.index("games")]) >= 0

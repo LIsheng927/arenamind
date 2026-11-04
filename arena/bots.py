@@ -12,10 +12,10 @@ first opponent a trained policy has to beat, and a fixed yardstick later on.
 It only uses what a player could know: its own state, whether it can see the
 opponent, where it last saw it, and bullets in its line of sight.
 
-CamperBot, RusherBot and KiterBot aim and shoot like RuleBot but move in
-other ways (hold a spot, charge in, keep away). A policy trained only against
-RuleBot has never seen them, so they show whether it learned to fight or only
-learned RuleBot's habits.
+CamperBot, RusherBot, KiterBot and FlankerBot aim and shoot like RuleBot but
+move in other ways (hold a spot, charge in, keep away, come from the side). No
+training run uses them: they show whether a policy learned to fight or only
+learned the habits of the opponents it trained against.
 """
 
 from __future__ import annotations
@@ -252,6 +252,30 @@ class KiterBot(RuleBot):
     TOO_CLOSE, TOO_FAR = 10.0, 14.0
 
 
+class FlankerBot(RuleBot):
+    """Comes at the opponent from the side instead of straight on, then circles
+    it in one direction at mid range without ever switching sides.
+
+    Kept for a final test: it was written before any policy played it, and no
+    training run or design decision has looked at how policies do against it."""
+
+    TOO_CLOSE, TOO_FAR = 5.0, 8.0
+    SWING = 5.0  # how far to the side of the straight line it walks
+
+    def _target(self, env: ArenaEnv, visible: np.ndarray, last_seen: np.ndarray) -> np.ndarray:
+        target = super()._target(env, visible, last_seen)
+        rel = target - env.pos[:, self.player]
+        dist = np.linalg.norm(rel, axis=-1, keepdims=True)
+        sideways = np.stack([-rel[:, 1], rel[:, 0]], axis=-1) / np.maximum(dist, 1e-6)
+        flank = target + sideways * self.side[:, None] * np.minimum(self.SWING, dist / 2)
+        flank = np.clip(flank, 1.0, self.cfg.arena.size - 1.0)
+        return np.where(visible[:, None], target, flank)
+
+    def _move(self, env: ArenaEnv, s: dict) -> tuple[np.ndarray, np.ndarray]:
+        self.side_timer[:] = 10**6  # keep circling the same way
+        return super()._move(env, s)
+
+
 BOTS: dict[str, Callable[[ArenaEnv, int, int | None], object]] = {
     "random": RandomBot,
     "rule": RuleBot,
@@ -259,6 +283,7 @@ BOTS: dict[str, Callable[[ArenaEnv, int, int | None], object]] = {
     "camper": CamperBot,
     "rusher": RusherBot,
     "kiter": KiterBot,
+    "flanker": FlankerBot,
 }
 
 

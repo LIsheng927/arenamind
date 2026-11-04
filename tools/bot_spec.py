@@ -1,16 +1,16 @@
 """Turn a bot name from the command line into a bot.
 
-    random | rule | idle      built-in bots (idle stands still and never shoots)
-    camper | rusher | kiter   rule-bot variants that move differently (see arena/bots.py)
-    ppo:<checkpoint>          a trained policy, sampling its actions
-    ppo-greedy:<checkpoint>   the same policy, always taking its most likely action
+    random | rule | idle                built-in bots (idle stands still, never shoots)
+    camper | rusher | kiter | flanker   rule-bot variants that move differently
+    ppo:<checkpoint>                    a trained policy, sampling its actions
+    ppo-greedy:<checkpoint>             the same policy, always its most likely action
 """
 
 from __future__ import annotations
 
 from arena.bots import BOTS
 
-HELP = "random, rule, idle, camper, rusher, kiter, ppo:<path to model.pt> or ppo-greedy:<path>"
+HELP = "random, rule, idle, camper, rusher, kiter, flanker, ppo:<path to model.pt> or ppo-greedy:<path>"
 
 
 def make_bot(spec: str, env, player: int, seed: int | None = None):
