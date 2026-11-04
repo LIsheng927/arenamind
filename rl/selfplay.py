@@ -29,8 +29,8 @@ from a pool that grows as the policy improves:
                       copy of the policy happens to exploit.
 
 Each game draws its slot when it starts (p_rule, p_latest and p_fixed; the
-rest is shared by the past slots). `seed_pool` loads the snapshots of an
-earlier run into the pool, so a continued run keeps its history. A game in
+rest is shared by the past slots). `seed_pool` loads the snapshots of
+earlier runs into the pool, so a continued run keeps its history. A game in
 progress keeps its slot when the pool is refreshed, so it may switch to a
 newer copy halfway through; that happens at most once every `snapshot_every`
 iterations.
@@ -83,7 +83,7 @@ class SelfPlayConfig(PPOConfig):
     init: str = ""  # start from this checkpoint instead of from scratch ("" = scratch)
     fixed: tuple[str, ...] = ()  # frozen opponents loaded from these checkpoints
     p_fixed: float = 0.0  # share of games against them, split evenly
-    seed_pool: str = ""  # folder of snapshots from an earlier run to start the pool with
+    seed_pool: tuple[str, ...] = ()  # folders of snapshots from earlier runs to start the pool with
 
 
 class OpponentPool:
@@ -109,8 +109,11 @@ class OpponentPool:
         probs = np.array([cfg.p_rule, cfg.p_latest] + [max(rest, 0.0) / cfg.past_slots] * cfg.past_slots + fixed)
         self.probs = probs / probs.sum()
         self.snapshots: list[dict] = []
-        if cfg.seed_pool:
-            for path in sorted(Path(cfg.seed_pool).glob("*.pt")):
+        for folder in cfg.seed_pool:
+            paths = sorted(Path(folder).glob("*.pt"))
+            if not paths:
+                raise ValueError(f"no snapshots (*.pt) in {folder}")
+            for path in paths:
                 self.snapshots.append(torch.load(path, map_location="cpu", weights_only=False)["model"])
         self.add(model)
         self.slot = self.rng.choice(len(self.probs), size=env.num_envs, p=self.probs)
@@ -288,7 +291,8 @@ def main() -> None:
     parser.add_argument("--init", default="", help="start from this model instead of from scratch")
     parser.add_argument("--fixed", nargs="*", default=[], help="frozen opponents (model files)")
     parser.add_argument("--p-fixed", type=float, default=SelfPlayConfig.p_fixed)
-    parser.add_argument("--seed-pool", default="", help="start the pool with this run's snapshots")
+    parser.add_argument("--seed-pool", nargs="*", default=[],
+                        help="start the pool with the snapshots in these folders")
     parser.add_argument("--p-rule", type=float, default=SelfPlayConfig.p_rule)
     parser.add_argument("--p-latest", type=float, default=SelfPlayConfig.p_latest)
     parser.add_argument("--past-slots", type=int, default=SelfPlayConfig.past_slots)
@@ -299,7 +303,7 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = SelfPlayConfig(total_steps=args.steps, reference=args.reference, init=args.init,
-                         fixed=tuple(args.fixed), p_fixed=args.p_fixed, seed_pool=args.seed_pool,
+                         fixed=tuple(args.fixed), p_fixed=args.p_fixed, seed_pool=tuple(args.seed_pool),
                          p_rule=args.p_rule, p_latest=args.p_latest, past_slots=args.past_slots,
                          snapshot_every=args.snapshot_every, num_envs=args.num_envs,
                          seed=args.seed, device=args.device)

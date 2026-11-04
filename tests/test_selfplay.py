@@ -117,9 +117,25 @@ def test_seed_pool_starts_with_an_earlier_runs_snapshots(tmp_path):
     folder = tmp_path / "pool"
     for i in range(3):
         saved_tiny_model(folder / f"iter_{i:05d}.pt")
-    cfg = SelfPlayConfig(hidden=32, seed_pool=str(folder))
+    cfg = SelfPlayConfig(hidden=32, seed_pool=(str(folder),))
     pool = OpponentPool(ArenaEnv(8, seed=5), cfg, tiny_model(), np.random.default_rng(5))
     assert len(pool.snapshots) == 4  # three loaded + the current policy
+
+
+def test_seed_pool_can_combine_several_runs(tmp_path):
+    for run, n in (("a", 3), ("b", 2)):
+        for i in range(n):
+            saved_tiny_model(tmp_path / run / f"iter_{i:05d}.pt")
+    cfg = SelfPlayConfig(hidden=32, seed_pool=(str(tmp_path / "a"), str(tmp_path / "b")))
+    pool = OpponentPool(ArenaEnv(8, seed=6), cfg, tiny_model(), np.random.default_rng(6))
+    assert len(pool.snapshots) == 6  # 3 + 2 loaded + the current policy
+
+
+def test_seed_pool_refuses_a_folder_without_snapshots(tmp_path):
+    (tmp_path / "empty").mkdir()
+    cfg = SelfPlayConfig(hidden=32, seed_pool=(str(tmp_path / "empty"),))
+    with pytest.raises(ValueError):
+        OpponentPool(ArenaEnv(8, seed=7), cfg, tiny_model(), np.random.default_rng(7))
 
 
 def test_tiny_exploiter_run_completes(tmp_path):
