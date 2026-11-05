@@ -11,7 +11,8 @@ Every knob works while the policy plays; the network itself is unchanged.
             slowly, with this standard deviation in degrees, like an unsteady
             hand.
     every   the policy decides only every this many steps and repeats its last
-            action in between, like a slower hand.
+            action in between, like a slower hand. Fractions mix the gaps:
+            1.5 decides after 2 steps, then 1, then 2, and so on.
 
 On the command line a policy takes its settings after an @ (tools/bot_spec.py):
 
@@ -41,7 +42,7 @@ class Difficulty:
     temperature: float = 1.0
     delay: int = 0
     aim: float = 0.0
-    every: int = 1
+    every: float = 1.0
 
     def __post_init__(self) -> None:
         if self.temperature < 0 or self.delay < 0 or self.aim < 0 or self.every < 1:
@@ -56,7 +57,7 @@ class Difficulty:
             if not sep or key not in KNOBS:
                 raise ValueError(f"unknown setting {part!r}; use {', '.join(KNOBS)} (e.g. delay=3)")
             name = KNOBS[key]
-            values[name] = int(value) if name in ("delay", "every") else float(value)
+            values[name] = int(value) if name == "delay" else float(value)
         return cls(**values)
 
     def label(self) -> str:
@@ -81,7 +82,7 @@ class Handicap:
         self.error = self.rng.normal(0.0, self.sd, num_envs) if self.sd else np.zeros(num_envs)
         self.history: list[np.ndarray] = []  # recent observations, oldest first
         self.last_action = np.zeros((num_envs, 4), dtype=np.int64)
-        self.since = np.zeros(num_envs, dtype=np.int64)  # steps since the last decision
+        self.credit = np.zeros(num_envs)  # steps saved up towards the next decision
         self.fresh = np.ones(num_envs, dtype=bool)  # games that have just started
 
     def view(self, obs: np.ndarray) -> np.ndarray:
@@ -102,13 +103,18 @@ class Handicap:
 
     def deciding(self) -> np.ndarray:
         """Games in which the policy picks a new action this step."""
-        return self.fresh | (self.since >= self.knobs.every)
+        return self.fresh | (self.credit >= self.knobs.every - 1e-9)
 
     def choose(self, new_actions: np.ndarray) -> np.ndarray:
-        """New actions where the policy decides now, the last ones elsewhere."""
+        """New actions where the policy decides now, the last ones elsewhere.
+
+        Every step adds one to a game's credit and a decision spends `every` of
+        it, so decisions come `every` steps apart on average, fractions included.
+        """
         decide = self.deciding()
         self.last_action = np.where(decide[:, None], new_actions, self.last_action)
-        self.since = np.where(decide, 1, self.since + 1)
+        spent = np.where(decide, self.knobs.every, 0.0)
+        self.credit = np.where(self.fresh, 0.0, self.credit - spent) + 1
         self.fresh[:] = False
         return self.last_action.copy()
 

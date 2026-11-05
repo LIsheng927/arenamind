@@ -22,7 +22,7 @@ def test_settings_are_parsed_and_labelled():
     assert Difficulty.parse("temp=1.5,every=2") == Difficulty(temperature=1.5, every=2)
 
 
-@pytest.mark.parametrize("text", ["speed=2", "delay", "every=0", "delay=-1"])
+@pytest.mark.parametrize("text", ["speed=2", "delay", "every=0", "every=0.5", "delay=-1", "delay=1.5"])
 def test_bad_settings_are_refused(text):
     with pytest.raises(ValueError):
         Difficulty.parse(text)
@@ -63,6 +63,31 @@ def test_every_repeats_the_last_action_between_decisions():
         h.view(np.zeros((1, CFG.obs.obs_dim), dtype=np.float32))
         picked.append(int(h.choose(np.full((1, 4), t))[0, 0]))
     assert picked == [0, 0, 0, 3, 3, 3, 6]
+
+
+def test_a_fractional_every_mixes_gaps_with_the_right_average():
+    h = Handicap(Difficulty.parse("every=1.5"), 1, CFG.dt)
+    decided = []
+    for t in range(13):
+        decided.append(bool(h.deciding()[0]))
+        h.choose(np.full((1, 4), t))
+    steps = [t for t, d in enumerate(decided) if d]
+    assert steps == [0, 2, 3, 5, 6, 8, 9, 11, 12]  # gaps of 2 and 1 in turn
+
+    h = Handicap(Difficulty(every=1.3), 1, CFG.dt)
+    count = 0
+    for t in range(1300):
+        count += bool(h.deciding()[0])
+        h.choose(np.zeros((1, 4), dtype=np.int64))
+    assert abs(count - 1000) <= 1
+
+
+def test_a_new_game_decides_at_once_whatever_its_credit():
+    h = Handicap(Difficulty(every=4), 2, CFG.dt)
+    for _ in range(2):
+        h.choose(np.zeros((2, 4), dtype=np.int64))
+    h.on_done(np.array([False, True]))
+    assert h.deciding().tolist() == [False, True]
 
 
 def test_aim_error_turns_the_opponent_but_keeps_its_distance():
