@@ -134,6 +134,9 @@ gets the exploiter as an opponent, so that the weakness is trained away.
 | exploiter 1 | frozen self-play 1 only | 20M | 17 min |
 | self-play 2 | continues self-play 1 with its 123 snapshots; exploiter 1 in 20% of games, rule bot 15%, latest copy 40%, older copies 25% | 30M | 44 min |
 | exploiter 2 | frozen self-play 2 only | 20M | 16 min |
+| exploiter 3 | frozen self-play 2 only, starting from self-play 2's weights | 20M | 15 min |
+| self-play 3 | continues self-play 2 with all 215 earlier snapshots; exploiters 3 and 1 in 15% of games each, rule bot 15%, latest copy 35%, older copies 20% | 30M | 50 min |
+| exploiter 4 | frozen self-play 3 only, starting from self-play 3's weights | 20M | 15 min |
 
 Every 50 iterations the policy also plays 200 games against opponents that
 never change (the rule bot and an earlier model). The pool keeps changing, so
@@ -172,13 +175,18 @@ Elo ratings from the same league, with the rule bot pinned at 1000:
 | camper | 851 |
 | random | 458 |
 
-How far each self-play policy could be exploited (score from 200 games per
-evaluation):
+How far each self-play policy could be exploited. An exploiter trained from
+scratch spends most of its steps learning to play at all, so exploiters 3 and
+4 start from a copy of the policy they attack: they begin at about 50%, and
+anything above that is a real weakness. Final exploiters; the first two rows
+are from 200-game evaluations, the last two from 1000 games in a league:
 
-| Frozen policy | Exploiter's best score against it | At the end of training | Exploiter's score against the rule bot |
+| Frozen policy | Exploiter starts from | Exploiter's score against it | Exploiter's score against the rule bot |
 |---|---|---|---|
-| self-play 1 | 56.5% | 53.3% | 13.0% |
-| self-play 2 | 23.0% | 19.0% | 72.5% |
+| self-play 1 | scratch (exploiter 1) | 53% | 13% |
+| self-play 2 | scratch (exploiter 2) | 19% | 72.5% |
+| self-play 2 | its weights (exploiter 3) | **79%** | 99% |
+| self-play 3 | its weights (exploiter 4) | **62%** | 100% |
 
 ![Exploiter scores during training](docs/stage2_exploiters.png)
 
@@ -190,6 +198,15 @@ opponent. Self-play 2 learned to punish the trick within 1.7 million steps:
 its win rate against exploiter 1 went from 16% to 100%. Exploiter 2 found no
 such shortcut. To score at all it had to learn to fight, which made it a
 real fighter (72.5% against the rule bot), and it still never got above 23%.
+
+That looked like strong evidence, but exploiter 2 was simply too weak to
+find anything. Exploiter 3 had the same 20 million steps but started from
+self-play 2's weights, and it beat self-play 2 79% of the time. The few
+replays watched suggest how: it waits near its own spawn and shoots
+self-play 2 as it charges across the map. It was not simply a better player,
+though. Exploiter 1 scores 50% against it, and it beats the camper only 87%
+of the time, where self-play 2 manages 100% and 95%. Specialising against one
+opponent cost it what self-play 2 had learned against others, as in stage 1.
 
 ### Ablation: the exploiter, or just more training?
 
@@ -222,16 +239,49 @@ each with `rl.evaluate`), but with one run of each this could be down to
 chance in training. More seeds are needed before it can be credited to the
 exploiter. Head to head the two runs are even (53%).
 
+### A second round
+
+Self-play 3 continues self-play 2 with exploiters 3 and 1 as fixed opponents
+(see the table of runs). The test was fixed before the run: exploiter 3 at
+45% or less against self-play 3 means the weakness is gone, 55% or more means
+it is not, and anything between means it is partly fixed. Nothing else may
+get worse.
+
+| | Self-play 2 | Self-play 3 |
+|---|---|---|
+| exploiter 3 against it (league, 1000 games) | 80% | **47%** |
+| exploiter 1 against it | 0% | 0% |
+| against the rule bot (1000 games as blue) | 99.8% | 99.6% |
+| against the camper | 95.2% | 99.7% |
+| against the rusher | 80.9% | 88.0% |
+| against the kiter | 99.7% | 99.7% |
+| against the flanker | 99.3% | 100% |
+| head to head (league, 1000 games) | 41% | 59% |
+
+Exploiter 3 fell from 80% to 47%. By the rule that counts as partly fixed,
+although 47% is within noise of an even match. Nothing got worse, and the
+rusher went from 80.9% to 88.0% (as the ablation showed, the extra training
+may deserve part of that).
+
+Exploiter 4 measures self-play 3 the way exploiter 3 measured self-play 2:
+it starts from self-play 3's weights and trains for 20 million steps. It
+reached 62%, down from 79%. The rule fixed in advance was that 65% or less
+means the loop is converging, 75% or more that it is not. Like exploiter 3, it
+gave up some of the policy's breadth (exploiter 1 scores 24% against it, and
+it beats the camper 86% of the time). Two rounds are too few to call a trend,
+but the measure moved in the right direction. Self-play 3 is the strongest
+policy so far and the starting point for stage 3.
+
 ### What these numbers do not show
 
 * The test bots share the rule bot's aim, so they test different movement,
   not different players. Human play is a harder test.
 * The camper, rusher and kiter results were looked at while deciding what to
   train next, so only the flanker was truly unseen until the end.
-* An exploiter's score is a lower bound: a longer run or another method might
-  find more. Copying the target already scores 50%, so a score below 50%
-  (exploiter 2) shows that no shortcut was found, not that none exists.
-  Starting the exploiter from the target's weights would be a stricter test.
+* An exploiter's score is only a lower bound, and a weak exploiter can make a
+  policy look far safer than it is: exploiter 2, trained from scratch, scored
+  23% against self-play 2, while exploiter 3, started from its weights,
+  scored 79%. Exploiter 4's 62% is a lower bound too.
 * Every run was trained once, with one random seed, so it is unknown how much
   a second run would differ.
 * Ratings from different leagues cannot be compared. Self-play 2 rates 1505
@@ -241,20 +291,25 @@ exploiter. Head to head the two runs are even (53%).
   bot but 65% against the stage-1 policy and self-play 1. Elo squeezes this
   into one number per player, and the numbers depend on who is in the
   league.
-* The rusher is still the hardest opponent for self-play 2 (84%). Their
-  games are short (8.4 seconds on average) and self-play 2 is hit about 3
-  times per game, against 1.3 times by the rule bot.
+* The rusher is still the hardest bot. Self-play 3 beats it 88.0% of the
+  time; their games last 7.4 seconds on average and self-play 3 is hit 2.75
+  times per game, against 1.24 times by the rule bot.
 
 ```bash
 python -m rl.selfplay --name selfplay --steps 40000000 --reference runs/first/model.pt
 python -m rl.selfplay --name exploiter1 --steps 20000000 --fixed runs/selfplay/model.pt --p-fixed 1 --p-rule 0 --p-latest 0 --reference runs/selfplay/model.pt
 python -m rl.selfplay --name selfplay2 --steps 30000000 --init runs/selfplay/model.pt --seed-pool runs/selfplay/pool --fixed runs/exploiter1/model.pt --p-fixed 0.2 --p-rule 0.15 --p-latest 0.4 --reference runs/selfplay/model.pt
 python -m rl.selfplay --name exploiter2 --steps 20000000 --fixed runs/selfplay2/model.pt --p-fixed 1 --p-rule 0 --p-latest 0 --reference runs/selfplay2/model.pt
+python -m rl.selfplay --name exploiter3 --steps 20000000 --init runs/selfplay2/model.pt --fixed runs/selfplay2/model.pt --p-fixed 1 --p-rule 0 --p-latest 0 --reference runs/selfplay2/model.pt
+python -m rl.selfplay --name selfplay3 --steps 30000000 --init runs/selfplay2/model.pt --seed-pool runs/selfplay/pool runs/selfplay2/pool --fixed runs/exploiter3/model.pt runs/exploiter1/model.pt --p-fixed 0.3 --p-rule 0.15 --p-latest 0.35 --reference runs/selfplay2/model.pt
+python -m rl.selfplay --name exploiter4 --steps 20000000 --init runs/selfplay3/model.pt --fixed runs/selfplay3/model.pt --p-fixed 1 --p-rule 0 --p-latest 0 --reference runs/selfplay3/model.pt
 python -m rl.selfplay --name selfplay2_noexp --steps 30000000 --init runs/selfplay/model.pt --seed-pool runs/selfplay/pool --p-rule 0.1875 --p-latest 0.5 --reference runs/selfplay/model.pt
-python -m rl.evaluate runs/selfplay2/model.pt --opponent rule camper rusher kiter idle flanker
+python -m rl.evaluate runs/selfplay3/model.pt --opponent rule camper rusher kiter idle flanker
 python -m rl.league rule kiter rusher camper flanker random ppo:runs/first/model.pt ppo:runs/selfplay/model.pt ppo:runs/selfplay2/model.pt
 python -m rl.league rule camper rusher kiter flanker random ppo:runs/exploiter1/model.pt ppo:runs/selfplay/model.pt ppo:runs/selfplay2/model.pt ppo:runs/selfplay2_noexp/model.pt
-python -m tools.plot_logs "vs self-play 1=runs/exploiter1/log.csv:eval_reference" "vs self-play 2=runs/exploiter2/log.csv:eval_reference" --percent --mark 0.5:even
+python -m rl.league rule camper rusher kiter flanker ppo:runs/exploiter1/model.pt ppo:runs/exploiter3/model.pt ppo:runs/selfplay2/model.pt ppo:runs/selfplay3/model.pt --games 500
+python -m rl.league ppo:runs/selfplay3/model.pt ppo:runs/exploiter4/model.pt rule rusher camper ppo:runs/exploiter1/model.pt --games 500
+python -m tools.plot_logs "self-play 1 (scratch)=runs/exploiter1/log.csv:eval_reference" "self-play 2 (scratch)=runs/exploiter2/log.csv:eval_reference" "self-play 2 (copy)=runs/exploiter3/log.csv:eval_reference" "self-play 3 (copy)=runs/exploiter4/log.csv:eval_reference" --percent --mark 0.5:even
 ```
 
 In a self-play log, `win_vs_rule`, `win_vs_latest`, `win_vs_past` and
