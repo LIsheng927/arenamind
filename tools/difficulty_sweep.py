@@ -2,6 +2,7 @@
 
     python -m tools.difficulty_sweep runs/selfplay3/model.pt
     python -m tools.difficulty_sweep runs/selfplay3/model.pt --knobs delay aim --games 50
+    python -m tools.difficulty_sweep runs/selfplay3/model.pt --replot   # redraw from results.csv
 
 Each knob is tried on its own at several levels (LEVELS below), starting from
 full strength. Every setting is rated against the fixed panel of rl/rate.py
@@ -17,12 +18,13 @@ Needs PyTorch, and matplotlib for the charts.
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
 from rl.difficulty import KNOBS, Difficulty
 from rl.rate import (DEFAULT_PANEL, DEFAULT_PANEL_FILE, STYLE, panel_ratings, rate_player, short,
                      write_csv)
-from tools.plot_logs import COLORS
+from tools.plot_logs import COLORS, spread
 from tools.plot_training import GRID, INK, INK_SOFT, SURFACE
 
 LEVELS = {"temp": (1.5, 2, 3, 5), "delay": (1, 2, 3, 5, 8), "aim": (2, 4, 8, 12, 20),
@@ -52,11 +54,19 @@ def main() -> None:
     parser.add_argument("--panel-file", default=DEFAULT_PANEL_FILE)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=Path("runs/difficulty"))
+    parser.add_argument("--replot", action="store_true",
+                        help="only redraw the charts from an earlier run's results.csv")
     args = parser.parse_args()
 
     panel = list(dict.fromkeys(args.panel))
     ratings = panel_ratings(panel, args.panel_games, args.seed, args.panel_file)
     print("panel: " + ", ".join(f"{short(p)} {r:.0f}" for p, r in ratings.items()))
+    if args.replot:
+        rows = read_rows(args.out / "results.csv")
+        knobs = [k for k in KNOBS if any(r["knob"] == k for r in rows)]
+        plot(rows, ratings, knobs, args.out)
+        print(f"wrote {args.out / 'strength.png'} and {args.out / 'style.png'}")
+        return
 
     rows = []
     todo = settings(args.checkpoint, args.knobs)
@@ -72,6 +82,13 @@ def main() -> None:
     write_csv(rows, args.out / "results.csv")
     plot(rows, ratings, args.knobs, args.out)
     print(f"wrote {args.out / 'results.csv'}, {args.out / 'strength.png'} and {args.out / 'style.png'}")
+
+
+def read_rows(path: Path) -> list[dict]:
+    """The rows of a results.csv written by an earlier run, with numbers as numbers."""
+    with open(path, newline="") as f:
+        return [{k: v if k in ("knob", "spec") else float(v) for k, v in row.items()}
+                for row in csv.DictReader(f)]
 
 
 def style_axes(ax) -> None:
@@ -117,8 +134,12 @@ def plot(rows: list[dict], ratings: dict[str, float], knobs: list[str], out: Pat
         ax.set_xlabel(UNITS[knob])
     last = axes[0][-1]
     x_end = last.get_xlim()[1]
-    for name, r in ratings.items():
-        last.text(x_end, r, f" {short(name)}", va="center", fontsize=8, color=INK_SOFT, clip_on=False)
+    low, high = last.get_ylim()
+    names = list(ratings)
+    heights = spread([ratings[n] for n in names], gap=0.045 * (high - low), top=high)
+    for name, height in zip(names, heights):  # labels nudged apart where ratings are close
+        last.text(x_end, height, f" {short(name)}", va="center", fontsize=8, color=INK_SOFT,
+                  clip_on=False)
     axes[0][0].set_ylabel("Elo against the fixed panel")
     fig.suptitle("Strength at each difficulty setting (one knob at a time)", x=0.07, ha="left",
                  fontsize=11, fontweight="bold", color=INK)

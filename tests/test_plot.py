@@ -62,3 +62,19 @@ def test_plot_logs_writes_an_image(tmp_path):
     plot([("win", log, "win_rate"), ("eval", log, "eval_rule")], out, "test", percent=True,
          marks=[(0.5, "even")])
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_difficulty_charts_are_redrawn_from_a_results_file(tmp_path):
+    from rl.rate import write_csv
+    from tools.difficulty_sweep import plot, read_rows
+
+    style = {"accuracy": 0.09, "reaction_s": 0.22, "move_changes_per_s": 5.7,
+             "turn_reversals_per_s": 3.7, "blind_shot_share": 0.48}
+    rows = [{"knob": "full", "level": 0, "spec": "ppo:m.pt", "elo": 1500.0, **style},
+            {"knob": "every", "level": 2, "spec": "ppo:m.pt@every=2", "elo": 1180.0, **style},
+            {"knob": "every", "level": 3, "spec": "ppo:m.pt@every=3", "elo": 790.0, **style}]
+    write_csv(rows, tmp_path / "results.csv")
+    back = read_rows(tmp_path / "results.csv")
+    assert back[1]["level"] == 2.0 and back[1]["knob"] == "every" and back[2]["elo"] == 790.0
+    plot(back, {"rule": 1000.0, "rusher": 1007.0, "random": 477.0}, ["every"], tmp_path)
+    assert (tmp_path / "strength.png").stat().st_size > 0 and (tmp_path / "style.png").stat().st_size > 0
