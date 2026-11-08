@@ -86,9 +86,13 @@ def main() -> None:
 
 def read_rows(path: Path) -> list[dict]:
     """The rows of a results.csv written by an earlier run, with numbers as numbers."""
+    def value(text: str) -> float | str:
+        try:
+            return float(text)
+        except ValueError:
+            return text
     with open(path, newline="") as f:
-        return [{k: v if k in ("knob", "spec") else float(v) for k, v in row.items()}
-                for row in csv.DictReader(f)]
+        return [{k: value(v) for k, v in row.items()} for row in csv.DictReader(f)]
 
 
 def style_axes(ax) -> None:

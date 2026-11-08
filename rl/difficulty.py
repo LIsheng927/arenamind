@@ -17,6 +17,9 @@ Every knob works while the policy plays; the network itself is unchanged.
 On the command line a policy takes its settings after an @ (tools/bot_spec.py):
 
     ppo:runs/selfplay3/model.pt@delay=3,aim=8
+
+Personality settings, which change how it plays rather than how well, are in
+rl/personality.py and can be mixed in (ppo:...@every=2.1,hold=4).
 """
 
 from __future__ import annotations
@@ -131,18 +134,21 @@ def rotate(forward: np.ndarray, right: np.ndarray, angle: np.ndarray) -> tuple[n
 
 
 class DifficultyBot:
-    """A trained policy played with difficulty settings (needs PyTorch)."""
+    """A trained policy played with difficulty and personality settings (needs PyTorch)."""
 
     def __init__(self, env, player: int, checkpoint: str | None = None,
-                 knobs: Difficulty = Difficulty(), seed: int | None = None, model=None) -> None:
+                 knobs: Difficulty = Difficulty(), seed: int | None = None, model=None,
+                 personality=None) -> None:
         import torch
 
+        from rl.personality import Personality
         from rl.ppo import load_policy
 
         if (checkpoint is None) == (model is None):
             raise ValueError("give either a checkpoint or a model")
         self.player = player
         self.knobs = knobs
+        self.personality = personality if personality is not None else Personality()
         self.model = model if model is not None else load_policy(checkpoint)
         self.device = next(self.model.parameters()).device
         self.generator = torch.Generator(device=self.device)
@@ -161,8 +167,12 @@ class DifficultyBot:
 
         with torch.no_grad():
             scores = self.model.actor(torch.as_tensor(obs, device=self.device))
+            heads = torch.split(scores, self.model.action_sizes, dim=-1)
+            if self.personality:  # personality shifts the scores before anything is drawn
+                heads = [s + torch.as_tensor(b, dtype=s.dtype, device=self.device)
+                         for s, b in zip(heads, self.personality.biases(obs))]
             picks = []
-            for s in torch.split(scores, self.model.action_sizes, dim=-1):
+            for s in heads:
                 if self.knobs.temperature == 0:
                     picks.append(s.argmax(dim=-1))
                 else:

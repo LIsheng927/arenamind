@@ -26,7 +26,9 @@ def test_style_of_a_bot_that_never_moves_or_shoots():
     w, l, d = play_measured("idle", "rule", 20, seed=0, side=0, style=style)
     assert w + l + d == 20 and w == 0
     assert style.shots == 0 and style.move_changes == 0 and style.turn_reversals == 0
-    assert style.seconds > 0
+    assert style.seconds > 0 and style.dashes == 0 and style.games == 20
+    s = style.summary()
+    assert s["distance"] > 0 and 0 <= s["in_sight_share"] <= 1 and s["game_s"] > 0
 
 
 def test_style_of_the_rule_bot_is_sensible():
@@ -38,6 +40,7 @@ def test_style_of_the_rule_bot_is_sensible():
     assert style.hits >= 5 * 30  # five hits win a game
     assert 0 < s["reaction_s"] < 5
     assert 0 <= s["blind_shot_share"] <= 1
+    assert style.hits_taken == 0 and s["shots_per_s"] > 0  # the idle bot never shoots
 
 
 def test_panel_ratings_are_saved_and_reused(tmp_path, monkeypatch):

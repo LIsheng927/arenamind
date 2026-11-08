@@ -6,6 +6,8 @@
     ppo-greedy:<checkpoint>             the same policy, always its most likely action
     ppo:<checkpoint>@delay=3,aim=8      a trained policy with difficulty settings
                                         (temp, delay, aim, every; see rl/difficulty.py)
+    ppo:<checkpoint>@every=2,hold=4     ...and personality settings
+                                        (approach, hold, dash; see rl/personality.py)
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from __future__ import annotations
 from arena.bots import BOTS
 
 HELP = ("random, rule, idle, camper, rusher, kiter, flanker, ppo:<path to model.pt>, "
-        "ppo-greedy:<path>, or either with difficulty settings, e.g. ppo:<path>@delay=3,aim=8")
+        "ppo-greedy:<path>, or either with settings, e.g. ppo:<path>@every=2,hold=4")
 
 
 def make_bot(spec: str, env, player: int, seed: int | None = None):
@@ -22,15 +24,16 @@ def make_bot(spec: str, env, player: int, seed: int | None = None):
             path, _, settings = spec[len(prefix):].partition("@")
             if settings:
                 from rl.difficulty import Difficulty, DifficultyBot  # needs PyTorch
+                from rl.personality import parse_settings
                 try:
-                    knobs = Difficulty.parse(settings)
+                    knobs, personality = parse_settings(settings)
                 except ValueError as error:
                     raise SystemExit(str(error)) from None
                 if greedy:
                     if knobs.temperature != 1.0:
                         raise SystemExit("ppo-greedy always takes the most likely action; drop temp=")
                     knobs = Difficulty(0.0, knobs.delay, knobs.aim, knobs.every)
-                return DifficultyBot(env, player, path, knobs, seed)
+                return DifficultyBot(env, player, path, knobs, seed, personality=personality)
             from rl.policy_bot import PolicyBot  # needs PyTorch, so only imported when used
             return PolicyBot(env, player, path, greedy=greedy, seed=seed)
     if spec not in BOTS:

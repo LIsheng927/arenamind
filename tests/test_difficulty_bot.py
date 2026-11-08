@@ -10,6 +10,7 @@ from arena.env import ArenaEnv  # noqa: E402
 from arena.obs import observe  # noqa: E402
 from rl.difficulty import Difficulty, DifficultyBot  # noqa: E402
 from rl.model import ActorCritic  # noqa: E402
+from rl.personality import OPPONENT_VISIBLE, Personality  # noqa: E402
 from rl.ppo import PPOConfig, save_checkpoint  # noqa: E402
 from tools.bot_spec import make_bot  # noqa: E402
 
@@ -51,3 +52,22 @@ def test_a_spec_with_settings_plays_valid_actions(tmp_path):
         bot.on_done(env, done)
     with pytest.raises(SystemExit):
         make_bot(f"ppo-greedy:{path}@temp=2", env, 1)
+
+
+def test_holding_fire_never_shoots_blind():
+    env = ArenaEnv(64, seed=4)
+    bot = DifficultyBot(env, 0, model=tiny_model(), seed=1, personality=Personality(hold=50.0))
+    for _ in range(40):
+        blind = observe(env)[:, 0, OPPONENT_VISIBLE] < 0.5
+        actions = np.zeros((64, 2, 4), dtype=np.int64)
+        actions[:, 0] = bot.act(env)
+        assert not actions[blind, 0, 2].any()
+        _, done, _ = env.step(actions)
+        bot.on_done(env, done)
+
+
+def test_a_spec_can_mix_difficulty_and_personality(tmp_path):
+    path = tmp_path / "model.pt"
+    save_checkpoint(path, tiny_model(), PPOConfig(hidden=32), step=0)
+    bot = make_bot(f"ppo:{path}@every=2,approach=-1", ArenaEnv(4, seed=0), 0, seed=0)
+    assert bot.knobs == Difficulty(every=2) and bot.personality == Personality(approach=-1.0)

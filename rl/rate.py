@@ -19,6 +19,11 @@ Each player's games are also measured for how it plays:
     move changes    times per second the movement direction changes
     turn reversals  times per second it starts turning the other way
     blind shots     share of shots fired while the opponent is out of sight
+    distance        average distance to the opponent, in arena units
+    in sight        share of the time the two players can see each other
+    shots, dashes   per second
+    hits taken      per game
+    game length     average seconds per game
 """
 
 from __future__ import annotations
@@ -39,7 +44,8 @@ from .league import ANCHOR, SCALE, fit_elo, run_league
 DEFAULT_PANEL = ("random", "camper", "rule", "rusher", "ppo:runs/selfplay/model.pt",
                  "ppo:runs/selfplay2/model.pt", "ppo:runs/selfplay3/model.pt")
 DEFAULT_PANEL_FILE = "runs/panel.json"
-STYLE = ("accuracy", "reaction_s", "move_changes_per_s", "turn_reversals_per_s", "blind_shot_share")
+STYLE = ("accuracy", "reaction_s", "move_changes_per_s", "turn_reversals_per_s", "blind_shot_share",
+         "distance", "in_sight_share", "shots_per_s", "dashes_per_s", "hits_taken_per_game", "game_s")
 
 
 @dataclass
@@ -53,6 +59,12 @@ class Style:
     move_changes: int = 0
     turn_reversals: int = 0
     reactions: list[float] = field(default_factory=list)
+    games: int = 0
+    steps: int = 0
+    distance: float = 0.0  # summed over steps
+    in_sight: int = 0  # steps with the opponent in sight
+    dashes: int = 0
+    hits_taken: int = 0
 
     def summary(self) -> dict[str, float]:
         def ratio(a: float, b: float) -> float:
@@ -63,6 +75,12 @@ class Style:
             "move_changes_per_s": ratio(self.move_changes, self.seconds),
             "turn_reversals_per_s": ratio(self.turn_reversals, self.seconds),
             "blind_shot_share": ratio(self.blind_shots, self.shots),
+            "distance": ratio(self.distance, self.steps),
+            "in_sight_share": ratio(self.in_sight, self.steps),
+            "shots_per_s": ratio(self.shots, self.seconds),
+            "dashes_per_s": ratio(self.dashes, self.seconds),
+            "hits_taken_per_game": ratio(self.hits_taken, self.games),
+            "game_s": ratio(self.seconds, self.games),
         }
 
 
@@ -74,8 +92,9 @@ def play_measured(player: str, opponent: str, games: int, seed: int, side: int,
     bots[side] = make_bot(player, env, side, seed + 1)
     bots[1 - side] = make_bot(opponent, env, 1 - side, seed + 2)
     cfg = env.cfg
-    if cfg.shoot_cooldown_steps < 2:
-        raise ValueError("shots are recognised by the cooldown they start; it must be 2 steps or more")
+    if min(cfg.shoot_cooldown_steps, cfg.dash_cooldown_steps) < 2:
+        raise ValueError("shots and dashes are recognised by the cooldown they start; "
+                         "it must be 2 steps or more")
     turn_sign = np.sign(np.array(cfg.agent.turn_degrees)).astype(np.int64)
 
     finished = np.zeros(games, dtype=bool)
@@ -87,18 +106,25 @@ def play_measured(player: str, opponent: str, games: int, seed: int, side: int,
     while not finished.all():
         playing = ~finished
         visible = env.visible.copy()  # what both players can see when they decide
+        apart = np.linalg.norm(env.pos[:, 0] - env.pos[:, 1], axis=-1)
         waiting[playing & visible & ~prev_visible] = 0
         waiting[~visible] = -1
         actions = np.stack([b.act(env) for b in bots], axis=1)
         move, turn = actions[:, side, 0], turn_sign[actions[:, side, 1]]
         _, done, info = env.step(actions)
-        # A shot sets the cooldown, which is then counted down once in the same step.
+        # A shot or a dash sets a cooldown, which is then counted down once in the same step.
         fired = playing & (env.shoot_cd[:, side] == cfg.shoot_cooldown_steps - 1)
+        dashed = playing & (env.dash_cd[:, side] == cfg.dash_cooldown_steps - 1)
 
         style.seconds += cfg.dt * playing.sum()
         style.shots += int(fired.sum())
         style.blind_shots += int((fired & ~visible).sum())
         style.hits += int(np.rint(info["damage_dealt"][playing, side] / cfg.weapon.damage).sum())
+        style.hits_taken += int(np.rint(info["damage_dealt"][playing, 1 - side] / cfg.weapon.damage).sum())
+        style.steps += int(playing.sum())
+        style.distance += float(apart[playing].sum())
+        style.in_sight += int((playing & visible).sum())
+        style.dashes += int(dashed.sum())
         style.move_changes += int((playing & (prev_move >= 0) & (move != prev_move)).sum())
         reversal = playing & (turn != 0) & (last_turn != 0) & (turn != last_turn)
         style.turn_reversals += int(reversal.sum())
@@ -113,6 +139,7 @@ def play_measured(player: str, opponent: str, games: int, seed: int, side: int,
         prev_visible = visible
         new = done & playing
         outcome[new] = info["outcome"][new, side]
+        style.games += int(new.sum())
         finished |= done
         prev_move[done], last_turn[done], waiting[done], prev_visible[done] = -1, 0, -1, False
         for b in bots:
