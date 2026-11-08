@@ -2,6 +2,7 @@
 
     python -m tools.difficulty_ladder runs/selfplay3/model.pt
     python -m tools.difficulty_ladder runs/selfplay3/model.pt --targets 1300 1100 900 700 --knob every
+    python -m tools.difficulty_ladder runs/style2/model.pt --also aggression=-1 aggression=1
 
 The top level is the policy at full strength. For each target rating, one knob
 (every by default; see rl/difficulty.py) is turned until the policy's rating
@@ -16,11 +17,16 @@ themselves, and each pair's actual score is compared with the score their
 panel ratings predict. If the ratings only held against the panel, it would
 show here.
 
+With --also, every level is rated once more with each of the given extra
+settings (personality settings of rl/personality.py, say), to show how far
+they move a level's strength.
+
 Writes to --out:
 
     ladder.json   the levels: setting, bot spec, rating and style
     tries.csv     every setting tried while searching
     checks.csv    every pair of levels: predicted and actual score
+    also.csv      every level with each --also setting: rating and style
     ladder.png    rating against the knob with the levels marked, and actual
                   against predicted scores between levels
 
@@ -40,6 +46,7 @@ import numpy as np
 
 from rl.difficulty import Difficulty
 from rl.league import run_league
+from rl.personality import parse_settings
 from rl.rate import DEFAULT_PANEL, DEFAULT_PANEL_FILE, STYLE, panel_ratings, rate_player, short, write_csv
 
 # Per knob: its full-strength level, the furthest level searched, and the step levels are rounded to.
@@ -113,7 +120,14 @@ def main() -> None:
     parser.add_argument("--panel-file", default=DEFAULT_PANEL_FILE)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=Path("runs/ladder"))
+    parser.add_argument("--also", nargs="*", default=[], metavar="SETTINGS",
+                        help="also rate every level with these extra settings, e.g. aggression=-1")
     args = parser.parse_args()
+    for extra in args.also:  # refuse a typo now, not after the search
+        try:
+            parse_settings(extra)
+        except ValueError as error:
+            raise SystemExit(str(error)) from None
 
     panel = list(dict.fromkeys(args.panel))
     ratings = panel_ratings(panel, args.panel_games, args.seed, args.panel_file)
@@ -180,15 +194,31 @@ def main() -> None:
         print(f"{c['stronger'] + '-' + c['weaker']:<9}{c['rating_gap']:6.0f}  {c['predicted']:9.1%}"
               f"  {c['actual']:6.1%} +- {2 * c['noise']:.1%}")
 
+    also = []
+    for extra in args.also:
+        print(f"\nevery level with {extra}:")
+        for name, lv in zip(names, levels):
+            combined = lv["spec"] + ("," if "@" in lv["spec"] else "@") + extra
+            rating, _, style = rate_player(combined, ratings, args.games, args.seed + 7)
+            s = style.summary()
+            also.append({"level": name, "settings": extra, "spec": combined, "elo": round(rating, 1),
+                         **{key: round(s[key], 4) for key in STYLE}})
+            print(f"  {name:<4} Elo {rating:5.0f} ({rating - lv['elo']:+4.0f}) | distance "
+                  f"{s['distance']:5.2f}, hits taken {s['hits_taken_per_game']:.2f}/game, "
+                  f"game {s['game_s']:.1f}s")
+
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "ladder.json").write_text(json.dumps({
         "checkpoint": args.checkpoint, "knob": args.knob, "games": args.games,
         "panel": {short(p): round(r, 1) for p, r in ratings.items()},
-        "levels": [{"name": n, **lv} for n, lv in zip(names, levels)]}, indent=2))
+        "levels": [{"name": n, **lv} for n, lv in zip(names, levels)],
+        "also": also}, indent=2))
     write_csv([details[x] for x in sorted(details)], args.out / "tries.csv")
     write_csv(checks, args.out / "checks.csv")
+    if also:
+        write_csv(also, args.out / "also.csv")
     plot(details, levels, names, checks, args.knob, args.out / "ladder.png")
-    print(f"\nwrote ladder.json, tries.csv, checks.csv and ladder.png to {args.out}")
+    print(f"\nwrote the ladder's files to {args.out}")
 
 
 def plot(details: dict[float, dict], levels: list[dict], names: list[str], checks: list[dict],

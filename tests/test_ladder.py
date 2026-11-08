@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import sys
 
 import numpy as np
@@ -67,7 +68,8 @@ def test_the_whole_run_with_ratings_faked(tmp_path, monkeypatch):
     pytest.importorskip("matplotlib")
 
     def level_of(spec):
-        return float(spec.split("@every=")[1]) if "@" in spec else 1.0
+        found = re.search(r"every=([0-9.]+)", spec)
+        return float(found.group(1)) if found else 1.0
 
     def fake_rate(spec, ratings, games, seed):
         style = Style(seconds=100.0, shots=200, hits=20, blind_shots=90, move_changes=500,
@@ -82,7 +84,8 @@ def test_the_whole_run_with_ratings_faked(tmp_path, monkeypatch):
     monkeypatch.setattr(ladder, "rate_player", fake_rate)
     monkeypatch.setattr(ladder, "run_league", fake_league)
     monkeypatch.setattr(ladder, "panel_ratings", lambda *a, **k: {"random": 477.0, "rule": 1000.0})
-    monkeypatch.setattr(sys, "argv", ["difficulty_ladder", "runs/x/model.pt", "--out", str(tmp_path)])
+    monkeypatch.setattr(sys, "argv", ["difficulty_ladder", "runs/x/model.pt", "--out", str(tmp_path),
+                                      "--also", "aggression=-1"])
     ladder.main()
 
     saved = json.loads((tmp_path / "ladder.json").read_text())
@@ -92,5 +95,19 @@ def test_the_whole_run_with_ratings_faked(tmp_path, monkeypatch):
     assert levels[1]["spec"].startswith("ppo:runs/x/model.pt@every=")
     for lv in levels[1:]:
         assert abs(lv["elo"] - lv["target"]) <= 25
-    for name in ("tries.csv", "checks.csv", "ladder.png"):
+    for name in ("tries.csv", "checks.csv", "ladder.png", "also.csv"):
         assert (tmp_path / name).stat().st_size > 0
+    also = saved["also"]
+    assert [a["level"] for a in also] == ["L5", "L4", "L3", "L2", "L1"]
+    assert also[0]["spec"] == "ppo:runs/x/model.pt@aggression=-1"
+    assert also[1]["spec"].startswith("ppo:runs/x/model.pt@every=")
+    assert also[1]["spec"].endswith(",aggression=-1")
+
+
+def test_a_misspelt_extra_setting_is_refused_before_any_game(monkeypatch):
+    def no_games(*args, **kwargs):
+        raise AssertionError("nothing should be played")
+    monkeypatch.setattr(ladder, "panel_ratings", no_games)
+    monkeypatch.setattr(sys, "argv", ["difficulty_ladder", "m.pt", "--also", "agression=-1"])
+    with pytest.raises(SystemExit):
+        ladder.main()
