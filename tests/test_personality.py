@@ -77,3 +77,25 @@ def test_sweep_settings_and_verdicts():
     assert result["approach"][0]  # 20% closer and 20% farther, both cheap
     assert not result["hold"][0]  # halved only at a level that costs 200 points
     assert not result["dash"][0]
+
+
+def test_sliders_are_inputs_not_shifts():
+    knobs, personality = parse_settings("every=2,aggression=-1,discipline=0.5")
+    assert knobs == Difficulty(every=2) and personality == Personality(aggression=-1.0, discipline=0.5)
+    assert personality.sliders().tolist() == [-1.0, 0.5]
+    assert personality and not personality.biased
+    assert not any(b.any() for b in personality.biases(obs_with_opponent(0.5, 0.0, visible=False)))
+    assert settings_label(knobs, personality) == "every=2,aggression=-1,discipline=0.5"
+
+
+def test_slider_verdicts_need_the_rating_floor():
+    def row(trait, level, elo, **style):
+        base = {"distance": 10.0, "blind_shot_share": 0.5, "game_s": 20.0}
+        return {"trait": trait, "level": level, "elo": elo, **{**base, **style}}
+    rows = [row("full", 0, 1500),
+            row("aggression", 1, 1420, game_s=14.0), row("aggression", -1, 1410, distance=13.5),
+            row("discipline", 1, 1390, blind_shot_share=0.02),
+            row("discipline", 0.5, 1450, blind_shot_share=0.15)]
+    result = verdicts(rows)
+    assert result["aggression"][0]
+    assert not result["discipline"][0]  # clean enough only below 1400

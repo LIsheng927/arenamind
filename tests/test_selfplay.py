@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")
 from arena.config import GameConfig  # noqa: E402
 from arena.env import ArenaEnv  # noqa: E402
 from arena.obs import observe  # noqa: E402
-from rl.model import ActorCritic  # noqa: E402
+from rl.model import ActorCritic, widen_inputs  # noqa: E402
 from rl.ppo import PPOConfig, save_checkpoint  # noqa: E402
 from rl.selfplay import OpponentPool, SelfPlayConfig, train_selfplay  # noqa: E402
 
@@ -148,3 +148,52 @@ def test_tiny_exploiter_run_completes(tmp_path):
     header, last = rows[0].split(","), rows[-1].split(",")
     assert np.isfinite(float(last[header.index("eval_reference")]))
     assert float(last[header.index("games")]) >= 0
+
+
+def test_widened_inputs_change_nothing():
+    small = tiny_model()
+    big = ActorCritic(CFG.obs.obs_dim + 2, CFG.action_sizes, hidden=32)
+    big.load_state_dict(widen_inputs(small.state_dict(), CFG.obs.obs_dim + 2))
+    obs = torch.randn(5, CFG.obs.obs_dim)
+    wide = torch.cat([obs, torch.randn(5, 2)], dim=1)  # whatever the sliders say
+    with torch.no_grad():
+        assert torch.allclose(small.actor(obs), big.actor(wide))
+        assert torch.allclose(small.critic(obs), big.critic(wide))
+    with pytest.raises(ValueError):
+        widen_inputs(big.state_dict(), CFG.obs.obs_dim)  # cannot take inputs away
+
+
+def test_tiny_style_run_starts_from_a_policy_without_sliders(tmp_path):
+    plain = saved_tiny_model(tmp_path / "plain.pt")
+    for i in range(2):
+        saved_tiny_model(tmp_path / "old_pool" / f"iter_{i:05d}.pt")
+    cfg = SelfPlayConfig(total_steps=2 * 16 * 32, num_envs=16, rollout_steps=32, epochs=1,
+                         minibatch_size=128, hidden=32, device="cpu", eval_every=1, eval_games=8,
+                         past_slots=2, p_fixed=0.2, fixed=(plain,),
+                         seed_pool=(str(tmp_path / "old_pool"),), init=plain, reference=plain,
+                         style=True)
+    train_selfplay(cfg, tmp_path / "style")
+    ckpt = torch.load(tmp_path / "style" / "model.pt", weights_only=False)
+    assert ckpt["obs_dim"] == CFG.obs.obs_dim + 2 and ckpt["ppo"]["style"]
+    rows = (tmp_path / "style" / "log.csv").read_text().strip().splitlines()
+    header, last = rows[0].split(","), rows[-1].split(",")
+    assert float(last[header.index("style_reward")]) != 0  # aggressive games pay for time
+    assert np.isfinite(float(last[header.index("eval_reference")]))
+
+
+def test_a_policy_with_sliders_plays_with_and_without_settings(tmp_path):
+    from tools.bot_spec import make_bot
+
+    wide = ActorCritic(CFG.obs.obs_dim + 2, CFG.action_sizes, hidden=32)
+    wide.load_state_dict(widen_inputs(tiny_model().state_dict(), CFG.obs.obs_dim + 2))
+    path = tmp_path / "style.pt"
+    save_checkpoint(path, wide, PPOConfig(hidden=32), step=0)
+    env = ArenaEnv(8, seed=9)
+    for spec in (f"ppo:{path}", f"ppo-greedy:{path}", f"ppo:{path}@aggression=1,discipline=0.5",
+                 f"ppo:{path}@every=2,aggression=-1,hold=2"):
+        actions = make_bot(spec, env, 0, seed=0).act(env)
+        assert actions.shape == (8, 4)
+        assert ((actions >= 0) & (actions < np.array(CFG.action_sizes))).all()
+    plain = saved_tiny_model(tmp_path / "plain.pt")
+    with pytest.raises(SystemExit):
+        make_bot(f"ppo:{plain}@aggression=1", env, 0)  # trained without sliders

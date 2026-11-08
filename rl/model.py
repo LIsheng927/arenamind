@@ -70,3 +70,21 @@ class ActorCritic(nn.Module):
         logp = sum(h.log_prob(actions[..., i]) for i, h in enumerate(heads))
         entropy = sum(h.entropy() for h in heads)
         return logp, entropy, self.value(obs)
+
+
+def widen_inputs(state: dict, n_in: int) -> dict:
+    """A copy of a state dict whose first layers take `n_in` inputs, the new ones with zero weights.
+
+    Extra inputs then change nothing: the network gives exactly the same
+    outputs as before until training gives those inputs weights. A policy
+    trained without personality sliders can start a run with them this way.
+    """
+    out = dict(state)
+    for key in ("actor.0.weight", "critic.0.weight"):
+        weight = state[key]
+        if weight.shape[1] > n_in:
+            raise ValueError(f"{key} already takes {weight.shape[1]} inputs, more than {n_in}")
+        if weight.shape[1] < n_in:
+            out[key] = torch.cat([weight, weight.new_zeros(weight.shape[0], n_in - weight.shape[1])], dim=1)
+    return out
+

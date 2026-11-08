@@ -150,6 +150,14 @@ class DifficultyBot:
         self.knobs = knobs
         self.personality = personality if personality is not None else Personality()
         self.model = model if model is not None else load_policy(checkpoint)
+        # A policy trained with personality sliders (rl/style.py) takes them as extra inputs.
+        self.extra = self.model.actor[0].in_features - env.cfg.obs.obs_dim
+        if self.extra not in (0, len(self.personality.sliders())):
+            raise ValueError(f"the policy takes {self.model.actor[0].in_features} inputs; "
+                             f"expected {env.cfg.obs.obs_dim} or {env.cfg.obs.obs_dim + 2}")
+        if not self.extra and self.personality.sliders().any():
+            raise ValueError("aggression and discipline need a policy trained with them "
+                             "(python -m rl.selfplay --style)")
         self.device = next(self.model.parameters()).device
         self.generator = torch.Generator(device=self.device)
         if seed is not None:
@@ -165,10 +173,14 @@ class DifficultyBot:
     def sample(self, obs: np.ndarray) -> np.ndarray:
         import torch
 
+        inputs = obs
+        if self.extra:
+            sliders = np.broadcast_to(self.personality.sliders(), (len(obs), self.extra))
+            inputs = np.concatenate([obs, sliders.astype(obs.dtype)], axis=1)
         with torch.no_grad():
-            scores = self.model.actor(torch.as_tensor(obs, device=self.device))
+            scores = self.model.actor(torch.as_tensor(inputs, device=self.device))
             heads = torch.split(scores, self.model.action_sizes, dim=-1)
-            if self.personality:  # personality shifts the scores before anything is drawn
+            if self.personality.biased:  # shifts to the scores, before anything is drawn
                 heads = [s + torch.as_tensor(b, dtype=s.dtype, device=self.device)
                          for s, b in zip(heads, self.personality.biases(obs))]
             picks = []

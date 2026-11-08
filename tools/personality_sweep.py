@@ -3,10 +3,14 @@
     python -m tools.personality_sweep runs/selfplay3/model.pt
     python -m tools.personality_sweep runs/selfplay3/model.pt --traits hold --games 50
     python -m tools.personality_sweep runs/selfplay3/model.pt --replot   # redraw from results.csv
+    python -m tools.personality_sweep runs/style/model.pt --traits aggression discipline \
+        --out runs/style_sweep
 
 Each setting of rl/personality.py is tried on its own at several levels
-(LEVELS below), at full strength. Every setting is rated against the fixed
-panel of rl/rate.py and its play is measured. Writes to --out:
+(LEVELS below), at full strength. The sliders, aggression and discipline,
+need a policy trained with them (rl/style.py); its own play is at 0, 0.
+Every setting is rated against the fixed panel of rl/rate.py and its play is
+measured. Writes to --out:
 
     results.csv       one row per setting: rating, style, score against each panel member
     personality.png   rating and the measures of play against each trait's level
@@ -18,6 +22,13 @@ while costing at most MAX_COST rating points (both fixed before the first run):
               level and at least 15% longer at some negative level
     hold      share of blind shots at most half of full strength's
     dash      dashes per second at least doubled or at least halved
+
+The sliders must stay at MIN_ELO or above instead (fixed before training):
+
+    aggression  games at least 25% shorter at some positive level, and the
+                distance to the opponent at least 30% longer at some
+                negative level
+    discipline  at most 10% of shots fired blind
 """
 
 from __future__ import annotations
@@ -26,17 +37,21 @@ import argparse
 from pathlib import Path
 
 from rl.personality import TRAITS, Personality
+from rl.style import SLIDERS
 from rl.rate import (DEFAULT_PANEL, DEFAULT_PANEL_FILE, STYLE, panel_ratings, rate_player, short,
                      write_csv)
 from tools.difficulty_sweep import read_rows, style_axes
 from tools.plot_logs import COLORS
 from tools.plot_training import GRID, INK, INK_SOFT, SURFACE
 
-LEVELS = {"approach": (-3, -1.5, 1.5, 3), "hold": (1, 2, 4, 8), "dash": (-3, -1.5, 1.5, 3)}
-MAX_COST = 100.0
+LEVELS = {"approach": (-3, -1.5, 1.5, 3), "hold": (1, 2, 4, 8), "dash": (-3, -1.5, 1.5, 3),
+          "aggression": (-1, -0.5, 0.5, 1), "discipline": (0.5, 1)}
+MAX_COST = 100.0  # rating points a trait may cost
+MIN_ELO = 1400.0  # rating a slider setting must keep
 ROWS = {"elo": "Elo against the panel", "distance": "distance to opponent", "in_sight_share":
         "share of time in sight", "blind_shot_share": "share of shots fired blind",
-        "dashes_per_s": "dashes per second", "hits_taken_per_game": "hits taken per game"}
+        "dashes_per_s": "dashes per second", "hits_taken_per_game": "hits taken per game",
+        "game_s": "seconds per game"}
 
 
 def settings(checkpoint: str, traits: list[str]) -> list[tuple[str, float, str]]:
@@ -52,11 +67,16 @@ def verdicts(rows: list[dict]) -> dict[str, tuple[bool, str]]:
     """For each trait swept: did it pass, and the evidence (see the module docstring)."""
     full = next(r for r in rows if r["trait"] == "full")
     result = {}
-    for trait in TRAITS:
+    for trait in (*TRAITS, *SLIDERS):
         own = [r for r in rows if r["trait"] == trait]
         if not own:
             continue
-        cheap = [r for r in own if full["elo"] - r["elo"] <= MAX_COST]
+        if trait in SLIDERS:
+            cheap = [r for r in own if r["elo"] >= MIN_ELO]
+            floor = f"rated {MIN_ELO:.0f} or more"
+        else:
+            cheap = [r for r in own if full["elo"] - r["elo"] <= MAX_COST]
+            floor = f"within {MAX_COST:.0f} points"
 
         def change(r: dict, key: str) -> float:
             return r[key] / full[key]
@@ -69,17 +89,25 @@ def verdicts(rows: list[dict]) -> dict[str, tuple[bool, str]]:
         elif trait == "hold":
             halved = [r["level"] for r in cheap if change(r, "blind_shot_share") <= 0.5]
             ok, why = bool(halved), f"blind shots halved at {halved or 'none'}"
-        else:
+        elif trait == "dash":
             moved = [r["level"] for r in cheap if not 0.5 < change(r, "dashes_per_s") < 2]
             ok, why = bool(moved), f"dashes doubled or halved at {moved or 'none'}"
-        result[trait] = (ok, why + f" (within {MAX_COST:.0f} points: {[r['level'] for r in cheap]})")
+        elif trait == "aggression":
+            shorter = [r["level"] for r in cheap if r["level"] > 0 and change(r, "game_s") <= 0.75]
+            farther = [r["level"] for r in cheap if r["level"] < 0 and change(r, "distance") >= 1.3]
+            ok = bool(shorter and farther)
+            why = f"25% shorter games at {shorter or 'none'}, 30% farther at {farther or 'none'}"
+        else:
+            clean = [r["level"] for r in cheap if r["blind_shot_share"] <= 0.10]
+            ok, why = bool(clean), f"10% or fewer blind shots at {clean or 'none'}"
+        result[trait] = (ok, why + f" ({floor}: {[r['level'] for r in cheap]})")
     return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("checkpoint")
-    parser.add_argument("--traits", nargs="+", choices=list(TRAITS), default=list(TRAITS))
+    parser.add_argument("--traits", nargs="+", choices=[*TRAITS, *SLIDERS], default=list(TRAITS))
     parser.add_argument("--games", type=int, default=100, help="games per panel member and side")
     parser.add_argument("--panel", nargs="+", default=list(DEFAULT_PANEL))
     parser.add_argument("--panel-games", type=int, default=200)
@@ -106,9 +134,10 @@ def main() -> None:
                          **{f"vs {short(o)}": round(v, 4) for o, v in scores.items()}})
             print(f"[{k}/{len(todo)}] {short(spec):<24} Elo {rating:5.0f} | distance {s['distance']:5.2f}, "
                   f"in sight {s['in_sight_share']:.0%}, blind shots {s['blind_shot_share']:.0%}, "
-                  f"dashes {s['dashes_per_s']:.2f}/s, hits taken {s['hits_taken_per_game']:.2f}/game")
+                  f"dashes {s['dashes_per_s']:.2f}/s, hits taken {s['hits_taken_per_game']:.2f}/game, "
+                  f"game {s['game_s']:.1f}s")
         write_csv(rows, args.out / "results.csv")
-    traits = [t for t in TRAITS if any(r["trait"] == t for r in rows)]
+    traits = [t for t in (*TRAITS, *SLIDERS) if any(r["trait"] == t for r in rows)]
     plot(rows, traits, args.out / "personality.png")
     for trait, (ok, why) in verdicts(rows).items():
         print(f"{trait:<9} {'passes' if ok else 'fails '}  {why}")
@@ -140,7 +169,7 @@ def plot(rows: list[dict], traits: list[str], path: Path) -> None:
             if row == 0:
                 ax.set_title(trait, loc="left", fontsize=10, color=INK)
             if row == len(ROWS) - 1:
-                ax.set_xlabel(f"{trait} (0 = the policy's own play)")
+                ax.set_xlabel(f"{trait} (0 = the policy's own play)" if trait in TRAITS else trait)
             if col == 0:
                 ax.set_ylabel(ROWS[key], rotation=0, ha="right", va="center")
     fig.suptitle("Personality settings at full strength", x=0.02, ha="left", fontsize=11,

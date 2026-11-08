@@ -28,8 +28,11 @@ class PolicyBot:
             torch.manual_seed(seed)
 
     def act(self, env: ArenaEnv) -> np.ndarray:
-        obs = torch.as_tensor(observe(env)[:, self.player], device=self.device)
-        actions, _, _ = self.model.act(obs, greedy=self.greedy)
+        obs = observe(env)[:, self.player]
+        extra = self.model.actor[0].in_features - obs.shape[1]
+        if extra > 0:  # trained with personality sliders (rl/style.py): play them at 0
+            obs = np.concatenate([obs, np.zeros((len(obs), extra), dtype=obs.dtype)], axis=1)
+        actions, _, _ = self.model.act(torch.as_tensor(obs, device=self.device), greedy=self.greedy)
         return actions.cpu().numpy()
 
     def on_done(self, env: ArenaEnv, done: np.ndarray) -> None:

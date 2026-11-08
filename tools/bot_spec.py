@@ -33,7 +33,10 @@ def make_bot(spec: str, env, player: int, seed: int | None = None):
                     if knobs.temperature != 1.0:
                         raise SystemExit("ppo-greedy always takes the most likely action; drop temp=")
                     knobs = Difficulty(0.0, knobs.delay, knobs.aim, knobs.every)
-                return DifficultyBot(env, player, path, knobs, seed, personality=personality)
+                try:
+                    return DifficultyBot(env, player, path, knobs, seed, personality=personality)
+                except ValueError as error:  # e.g. sliders for a policy trained without them
+                    raise SystemExit(f"{spec}: {error}") from None
             from rl.policy_bot import PolicyBot  # needs PyTorch, so only imported when used
             return PolicyBot(env, player, path, greedy=greedy, seed=seed)
     if spec not in BOTS:

@@ -10,6 +10,8 @@
     python -m rl.selfplay --name selfplay2 --steps 30000000 --init runs/selfplay/model.pt \
         --seed-pool runs/selfplay/pool --fixed runs/exploiter1/model.pt --p-fixed 0.2 \
         --p-rule 0.15 --p-latest 0.4 --reference runs/selfplay/model.pt
+    # one policy with personality sliders as inputs (rl/style.py), from self-play 3
+    python -m rl.selfplay --name style --style --init runs/selfplay3/model.pt ...
 
 Training against one fixed bot teaches a policy that bot's habits (stage 1:
 99% against the rule bot, 9% against the camper bot). Here the opponents come
@@ -41,6 +43,12 @@ opponents (the rule bot, and optionally an earlier model). The pool changes
 all the time, so its win rates cannot show progress; the references never
 change, so their numbers can be compared across the whole run.
 
+With `style`, the policy also gets the personality sliders of rl/style.py as
+extra inputs, each game draws sliders for the learner and for its opponent,
+and the learner's reward gets the extra terms that go with its sliders.
+Snapshots and opponents trained without sliders are given zero weights for
+them (rl/model.py, widen_inputs), so they play exactly as before.
+
 The camper, rusher, kiter and idle bots are never used here. They are kept for
 testing what the policy learned, like a held-out test set.
 """
@@ -63,9 +71,10 @@ from arena.env import ArenaEnv
 from arena.obs import observe
 
 from .gae import compute_gae
-from .model import ActorCritic
+from .model import ActorCritic, widen_inputs
 from .policy_bot import PolicyBot
 from .ppo import PPOConfig, load_policy, pick_device, ppo_update, save_checkpoint
+from .style import SLIDERS, sample_styles, style_reward, with_style
 
 KINDS = ("rule", "latest", "past", "fixed")
 
@@ -84,6 +93,7 @@ class SelfPlayConfig(PPOConfig):
     fixed: tuple[str, ...] = ()  # frozen opponents loaded from these checkpoints
     p_fixed: float = 0.0  # share of games against them, split evenly
     seed_pool: tuple[str, ...] = ()  # folders of snapshots from earlier runs to start the pool with
+    style: bool = False  # personality sliders as extra inputs, with their rewards (rl/style.py)
 
 
 class OpponentPool:
@@ -99,11 +109,12 @@ class OpponentPool:
         self.rng = rng
         self.rule = RuleBot(env, 1, cfg.seed + 1)
         device = next(model.parameters()).device
+        n_in = model.actor[0].in_features
         # Slot k >= 1 is played by self.models[k - 1]: the latest copy, the past
         # copies, then the fixed opponents.
-        self.models = [ActorCritic(model.actor[0].in_features, model.action_sizes, cfg.hidden).to(device)
+        self.models = [ActorCritic(n_in, model.action_sizes, cfg.hidden).to(device)
                        for _ in range(1 + cfg.past_slots)]
-        self.models += [load_policy(path).to(device) for path in cfg.fixed]
+        self.models += [load_opponent(path, n_in).to(device) for path in cfg.fixed]
         self.n_copies = 1 + cfg.past_slots
         fixed = [cfg.p_fixed / len(cfg.fixed)] * len(cfg.fixed) if cfg.fixed else []
         probs = np.array([cfg.p_rule, cfg.p_latest] + [max(rest, 0.0) / cfg.past_slots] * cfg.past_slots + fixed)
@@ -114,7 +125,8 @@ class OpponentPool:
             if not paths:
                 raise ValueError(f"no snapshots (*.pt) in {folder}")
             for path in paths:
-                self.snapshots.append(torch.load(path, map_location="cpu", weights_only=False)["model"])
+                state = torch.load(path, map_location="cpu", weights_only=False)["model"]
+                self.snapshots.append(widen_inputs(state, n_in))
         self.add(model)
         self.slot = self.rng.choice(len(self.probs), size=env.num_envs, p=self.probs)
 
@@ -148,6 +160,14 @@ class OpponentPool:
         self.slot[done] = self.rng.choice(len(self.probs), size=int(done.sum()), p=self.probs)
 
 
+def load_opponent(path: str, n_in: int) -> ActorCritic:
+    """A frozen policy from a file, taking `n_in` inputs (extra ones get zero weights)."""
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    model = ActorCritic(n_in, tuple(ckpt["action_sizes"]), ckpt["ppo"]["hidden"])
+    model.load_state_dict(widen_inputs(ckpt["model"], n_in))
+    return model.eval()
+
+
 def score_against(model: ActorCritic, make_opponent, games: int, seed: int) -> float:
     """Wins plus half the draws, as a share of `games`, playing as blue."""
     env = ArenaEnv(games, seed=seed)
@@ -171,15 +191,21 @@ def train_selfplay(cfg: SelfPlayConfig, run_dir: Path) -> ActorCritic:
     rng = np.random.default_rng(cfg.seed)
 
     env = ArenaEnv(cfg.num_envs, game_cfg, seed=cfg.seed)
-    model = ActorCritic(game_cfg.obs.obs_dim, game_cfg.action_sizes, cfg.hidden).to(device)
+    obs_dim = game_cfg.obs.obs_dim + (len(SLIDERS) if cfg.style else 0)
+    model = ActorCritic(obs_dim, game_cfg.action_sizes, cfg.hidden).to(device)
     if cfg.init:
-        model.load_state_dict(torch.load(cfg.init, map_location=device, weights_only=False)["model"])
+        state = torch.load(cfg.init, map_location=device, weights_only=False)["model"]
+        model.load_state_dict(widen_inputs(state, obs_dim))
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, eps=1e-5)
     pool = OpponentPool(env, cfg, model, rng)
     reference = load_policy(cfg.reference).to(device) if cfg.reference else None
 
     T, N = cfg.rollout_steps, cfg.num_envs
-    buf_obs = np.zeros((T, N, game_cfg.obs.obs_dim), dtype=np.float32)
+    # Each game's sliders, for the learner (blue) and its opponent; no columns without --style.
+    k = len(SLIDERS) if cfg.style else 0
+    styles = sample_styles(rng, N) if cfg.style else np.zeros((N, 0))
+    opponent_styles = sample_styles(rng, N) if cfg.style else np.zeros((N, 0))
+    buf_obs = np.zeros((T, N, obs_dim), dtype=np.float32)
     buf_act = np.zeros((T, N, 4), dtype=np.int64)
     buf_logp = np.zeros((T, N), dtype=np.float32)
     buf_val = np.zeros((T, N), dtype=np.float32)
@@ -194,11 +220,11 @@ def train_selfplay(cfg: SelfPlayConfig, run_dir: Path) -> ActorCritic:
                   "win_vs_rule", "win_vs_latest", "win_vs_past", "win_vs_fixed", "mean_game_steps",
                   "snapshots",
                   "eval_rule", "eval_reference", "policy_loss", "value_loss", "entropy",
-                  "approx_kl", "clip_frac", "learning_rate"])
+                  "approx_kl", "clip_frac", "learning_rate", "style_reward"])
     print(f"device: {device}, batch: {cfg.batch_size} samples per iteration, "
           f"reference: {cfg.reference or 'none'}, start: {cfg.init or 'from scratch'}, "
           f"fixed opponents: {', '.join(cfg.fixed) or 'none'}, "
-          f"pool: {len(pool.snapshots)} snapshots")
+          f"pool: {len(pool.snapshots)} snapshots, sliders: {'yes' if cfg.style else 'no'}")
 
     recent = deque(maxlen=500)  # (opponent kind, outcome, length) of recently finished games
     obs_all = observe(env)
@@ -212,24 +238,37 @@ def train_selfplay(cfg: SelfPlayConfig, run_dir: Path) -> ActorCritic:
                 group["lr"] = cfg.learning_rate * (1 - (it - 1) / iterations)
 
         # 1. Collect a rollout: the learner is blue, each game's opponent comes from the pool.
+        style_total = 0.0
         for t in range(T):
-            obs_t = torch.as_tensor(obs_all[:, 0], device=device)
-            actions, logp, value = model.act(obs_t)
-            buf_obs[t], buf_act[t] = obs_all[:, 0], actions.cpu().numpy()
+            mine = with_style(obs_all[:, 0], styles)
+            actions, logp, value = model.act(torch.as_tensor(mine, device=device))
+            buf_obs[t], buf_act[t] = mine, actions.cpu().numpy()
             buf_logp[t], buf_val[t] = logp.cpu().numpy(), value.cpu().numpy()
 
-            opponent = pool.act(env, torch.as_tensor(obs_all[:, 1], device=device))
+            theirs = with_style(obs_all[:, 1], opponent_styles)
+            opponent = pool.act(env, torch.as_tensor(theirs, device=device))
+            # A shot is fired when the gun is ready; blind if the opponent was out of sight.
+            blind = (buf_act[t][:, 2] == 1) & (env.shoot_cd[:, 0] == 0) & ~env.visible
             reward, done, info = env.step(np.stack([buf_act[t], opponent], axis=1))
             buf_rew[t], buf_done[t] = reward[:, 0], done
+            if cfg.style:
+                hits = info["damage_dealt"] / game_cfg.weapon.damage
+                bonus = style_reward(styles, hits[:, 0], hits[:, 1], blind)
+                buf_rew[t] += bonus
+                style_total += float(bonus.sum())
             for g in np.flatnonzero(done):  # before on_done deals the game a new opponent
                 recent.append((pool.kind(g), info["outcome"][g, 0], info["episode_length"][g]))
             pool.on_done(env, done)
+            if k and done.any():  # a new game, new sliders on both sides
+                styles[done] = sample_styles(rng, int(done.sum()))
+                opponent_styles[done] = sample_styles(rng, int(done.sum()))
             obs_all = observe(env)
         step += cfg.batch_size
 
         # 2. Advantages and critic targets, 3. the PPO update: exactly as in stage 1.
         with torch.no_grad():
-            last_values = model.value(torch.as_tensor(obs_all[:, 0], device=device)).cpu().numpy()
+            last = torch.as_tensor(with_style(obs_all[:, 0], styles), device=device)
+            last_values = model.value(last).cpu().numpy()
         advantages, returns = compute_gae(buf_rew, buf_val, buf_done, last_values,
                                           cfg.gamma, cfg.gae_lambda)
         batch = {
@@ -267,7 +306,7 @@ def train_selfplay(cfg: SelfPlayConfig, run_dir: Path) -> ActorCritic:
                       (outcome == 0).mean(), win_vs["rule"], win_vs["latest"], win_vs["past"],
                       win_vs["fixed"], length, len(pool.snapshots), eval_rule, eval_ref, stats["policy_loss"],
                       stats["value_loss"], stats["entropy"], stats["approx_kl"],
-                      stats["clip_frac"], lr_now])
+                      stats["clip_frac"], lr_now, style_total / cfg.batch_size])
         log_file.flush()
         if it == 1 or it % 10 == 0 or it == iterations:
             print(f"step {step:>11,} | {sps:6,.0f}/s | win vs rule {win_vs['rule']:5.1%} "
@@ -300,13 +339,15 @@ def main() -> None:
     parser.add_argument("--num-envs", type=int, default=SelfPlayConfig.num_envs)
     parser.add_argument("--seed", type=int, default=SelfPlayConfig.seed)
     parser.add_argument("--device", default=SelfPlayConfig.device, choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--style", action="store_true",
+                        help="train with personality sliders as extra inputs (rl/style.py)")
     args = parser.parse_args()
 
     cfg = SelfPlayConfig(total_steps=args.steps, reference=args.reference, init=args.init,
                          fixed=tuple(args.fixed), p_fixed=args.p_fixed, seed_pool=tuple(args.seed_pool),
                          p_rule=args.p_rule, p_latest=args.p_latest, past_slots=args.past_slots,
                          snapshot_every=args.snapshot_every, num_envs=args.num_envs,
-                         seed=args.seed, device=args.device)
+                         seed=args.seed, device=args.device, style=args.style)
     train_selfplay(cfg, Path("runs") / args.name)
 
 
