@@ -94,6 +94,7 @@ class SelfPlayConfig(PPOConfig):
     p_fixed: float = 0.0  # share of games against them, split evenly
     seed_pool: tuple[str, ...] = ()  # folders of snapshots from earlier runs to start the pool with
     style: bool = False  # personality sliders as extra inputs, with their rewards (rl/style.py)
+    style_scale: float = 1.0  # multiplies those rewards
 
 
 class OpponentPool:
@@ -253,7 +254,7 @@ def train_selfplay(cfg: SelfPlayConfig, run_dir: Path) -> ActorCritic:
             buf_rew[t], buf_done[t] = reward[:, 0], done
             if cfg.style:
                 hits = info["damage_dealt"] / game_cfg.weapon.damage
-                bonus = style_reward(styles, hits[:, 0], hits[:, 1], blind)
+                bonus = cfg.style_scale * style_reward(styles, hits[:, 0], hits[:, 1], blind)
                 buf_rew[t] += bonus
                 style_total += float(bonus.sum())
             for g in np.flatnonzero(done):  # before on_done deals the game a new opponent
@@ -341,13 +342,16 @@ def main() -> None:
     parser.add_argument("--device", default=SelfPlayConfig.device, choices=["auto", "cpu", "cuda"])
     parser.add_argument("--style", action="store_true",
                         help="train with personality sliders as extra inputs (rl/style.py)")
+    parser.add_argument("--style-scale", type=float, default=SelfPlayConfig.style_scale,
+                        help="multiply the sliders' rewards by this")
     args = parser.parse_args()
 
     cfg = SelfPlayConfig(total_steps=args.steps, reference=args.reference, init=args.init,
                          fixed=tuple(args.fixed), p_fixed=args.p_fixed, seed_pool=tuple(args.seed_pool),
                          p_rule=args.p_rule, p_latest=args.p_latest, past_slots=args.past_slots,
                          snapshot_every=args.snapshot_every, num_envs=args.num_envs,
-                         seed=args.seed, device=args.device, style=args.style)
+                         seed=args.seed, device=args.device, style=args.style,
+                         style_scale=args.style_scale)
     train_selfplay(cfg, Path("runs") / args.name)
 
 

@@ -1,5 +1,7 @@
 """Checks for self-play training. Skipped when PyTorch is not installed."""
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -179,6 +181,11 @@ def test_tiny_style_run_starts_from_a_policy_without_sliders(tmp_path):
     header, last = rows[0].split(","), rows[-1].split(",")
     assert float(last[header.index("style_reward")]) != 0  # aggressive games pay for time
     assert np.isfinite(float(last[header.index("eval_reference")]))
+
+    off = dataclasses.replace(cfg, style_scale=0.0, total_steps=16 * 32)
+    train_selfplay(off, tmp_path / "style_off")
+    rows = (tmp_path / "style_off" / "log.csv").read_text().strip().splitlines()
+    assert float(rows[-1].split(",")[rows[0].split(",").index("style_reward")]) == 0
 
 
 def test_a_policy_with_sliders_plays_with_and_without_settings(tmp_path):

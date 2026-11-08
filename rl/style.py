@@ -15,7 +15,8 @@ when it starts, and the learner's reward gets extra terms that depend on them:
                        opponent is out of sight
 
 The game's own reward (+-1 for the result, +-0.2 per hit) stays, so every
-style still plays to win; at a = 0 and d = 0 nothing is added. Because the
+style still plays to win; at a = 0 and d = 0 nothing is added. All the extra
+terms can be scaled up together (rl.selfplay --style-scale). Because the
 sliders are inputs, the network learns what each setting is rewarded for, and
 a game sets them when it plays (rl/personality.py):
 
