@@ -153,10 +153,12 @@ def plot(rows: list[dict], traits: list[str], path: Path) -> None:
                          "axes.labelcolor": INK_SOFT, "xtick.color": INK_SOFT,
                          "ytick.color": INK_SOFT})
     full = next(r for r in rows if r["trait"] == "full")
-    size = (3.3 * len(traits) + 1.6, 1.9 * len(ROWS) + 0.8)
+    margin = 2.4  # inches on the left for the row labels
+    size = (3.3 * len(traits) + margin, 1.9 * len(ROWS) + 0.8)
     fig, axes = plt.subplots(len(ROWS), len(traits), figsize=size, facecolor=SURFACE, sharey="row",
                              squeeze=False)
-    fig.subplots_adjust(left=0.2, right=0.97, top=0.93, bottom=0.06, hspace=0.35, wspace=0.12)
+    fig.subplots_adjust(left=margin / size[0], right=0.97, top=0.93, bottom=0.06, hspace=0.35,
+                        wspace=0.12)
     for col, (trait, color) in enumerate(zip(traits, COLORS)):
         points = sorted([(0.0, full)] + [(r["level"], r) for r in rows if r["trait"] == trait],
                         key=lambda p: p[0])
