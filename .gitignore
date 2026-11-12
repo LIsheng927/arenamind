@@ -8,4 +8,6 @@ venv/
 runs/
 recordings/
 *.onnx
+# ...except the exported policy the Unity game runs (tools/export_unity.py)
+!unity/Assets/ArenaMind/Resources/policy.onnx
 *.pt

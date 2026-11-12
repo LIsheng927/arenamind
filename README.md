@@ -6,8 +6,9 @@ reinforcement learning: PPO from scratch, self-play, and deployment in Unity.
 ![The self-play policy (blue) against the flanker bot, which it never met in training (orange)](docs/stage2_selfplay_vs_flanker.gif)
 
 Status: the game environment (stage 0), PPO training against a rule-based
-bot (stage 1), self-play (stage 2), and difficulty levels and personalities
-(stage 3) are done. Running the policy in Unity comes next.
+bot (stage 1), self-play (stage 2), difficulty levels and personalities
+(stage 3), and the trained NPC in Unity (stage 4) are done. Learning from
+human games comes next.
 
 ## The environment
 
@@ -45,6 +46,9 @@ python -m tools.viewer --blue "ppo:runs/style2/model.pt@every=2.2,aggression=1" 
 
 Viewer keys: Space pause, Right arrow single step, Up/Down speed, R show rays.
 Play keys: WASD or arrow keys move, mouse aim, click or Space shoot, Shift dash.
+
+To play the trained NPC in Unity, open `unity/` with Unity 6 (6000.0) and
+press Play in any scene (see [stage 4](#in-unity-stage-4)).
 
 ## Training (stage 1)
 
@@ -612,13 +616,92 @@ python -m tools.difficulty_ladder runs/style2/model.pt --out runs/ladder2 --also
 
 Round 1 is the same training command without `--style-scale` (`--name style`).
 
+## In Unity (stage 4)
+
+![You (blue) against the NPC at level L5 in Unity; the panel shows what it is about to do](docs/stage4_unity.png)
+
+### The problem: a policy that only exists in Python
+
+The policy was trained and rated inside the numpy game. A game engine needs
+three things from it: the network in a form the engine can run, the game
+rules in the engine's language, and evidence that the NPC in the engine is the
+one that was rated. The last is the hard part. A policy given slightly wrong
+observations does not crash; it just plays worse.
+
+### Three pieces
+
+* **The network as ONNX.** `tools/export_unity.py` writes the actor as an
+  ONNX file: 51 numbers in (the observation and the two personality sliders),
+  18 scores out. It is three linear layers with tanh between them, so the
+  file is written directly with two ONNX operations, Gemm and Tanh
+  (`tools/onnx_mlp.py`), not through PyTorch's exporter. Unity runs it with
+  Sentis on the CPU.
+* **The game in C#.** `unity/Assets/ArenaMind/Sim` ports `arena/` piece by
+  piece: the same step order, the same arithmetic in the same order, and the
+  same observation layout (player 1 sees the map turned by 180 degrees). It
+  does not depend on Unity, so it is tested on its own.
+* **The NPC.** Each step it writes its observation and sliders into the
+  network's input and draws one choice per head from the softmax of the
+  scores. Below L5 it decides only every N steps and repeats its last action
+  in between (`NpcBrain`, `DecisionGate`), as `rl/difficulty.py` plays the
+  ladder.
+
+Pressing Play starts a game against the NPC in any scene, with the five
+levels and three personalities to choose from. A panel shows what the NPC is
+about to do; while you are out of sight, a ring marks where it last saw you,
+which is all it knows.
+
+### Checking that it is the same NPC
+
+Three checks, from the smallest piece to the whole:
+
+| Check | How | Result |
+|---|---|---|
+| Network | 12 inputs from real games through Sentis, against PyTorch's scores | largest difference 2.4e-6 |
+| Game and observations | 4 recorded Python games (hits, dashes, a chase, one to the time limit; 1,006 steps) replayed in C# with the same actions, state and both observations compared after every step | same hits, deaths and sightings; positions within 1e-9, observations within 1e-5 |
+| The whole NPC | each level plays the next weaker one, 400 games per pair, as in Python | 4 of 4 pairs agree |
+
+The first two run as 13 EditMode tests; the third is the menu ArenaMind >
+Play the levels against each other. A pair agrees when the stronger level's
+share of the points in Unity is within three standard errors of Python's
+(criterion fixed before the run):
+
+| Pair | Unity | Python | z |
+|---|---|---|---|
+| L5 vs L4 | 91.9% | 90.6% | 0.63 |
+| L4 vs L3 | 89.5% | 87.4% | 0.94 |
+| L3 vs L2 | 76.0% | 79.1% | -1.06 |
+| L2 vs L1 | 82.1% | 81.0% | 0.41 |
+
+* A decision takes 0.10 ms in Sentis, so even L5 (10 decisions a second)
+  costs about 1 ms of CPU per second of play.
+* A mistake in the port would be named by the tests, for example "rule vs
+  rusher, step 37: observation of player 0, number 11 (opponent forward)",
+  instead of showing up as an NPC that feels slightly off.
+
+### What these numbers do not show
+
+* The level games are played with the neutral setting. The personalities are
+  checked only through the network check, whose inputs include all three.
+* The levels have still only played bots and each other. Whether they feel
+  evenly spaced to people has not been tested.
+* Only the editor on Windows was tested (Mono, CPU backend), not builds for
+  other platforms.
+
+```bash
+python -m tools.export_traces    # recorded games for the Unity tests
+python -m tools.export_unity runs/style2/model.pt --ladder runs/ladder2/ladder.json
+```
+
 ## Layout
 
 ```
 arena/      game: config, geometry, env (simulation), obs, bots, render
 rl/         PPO: model, GAE, training loop, self-play, evaluation, Elo league, policy as a bot,
             difficulty and personality settings, personality sliders, rating against a fixed panel
-tools/      viewer, play, replay, benchmark, training plots, difficulty and personality sweeps, ladder
+tools/      viewer, play, replay, benchmark, training plots, difficulty and personality sweeps, ladder,
+            export to Unity (ONNX, recorded games)
 tests/      unit tests and whole-game checks
+unity/      Unity 6 project: the game in C# (Sim), the NPC with Sentis (Game), tests against Python (Tests)
 docs/       environment spec, training curves, result charts
 ```

@@ -1,0 +1,26 @@
+# Made by Unity from the project: rebuilt when the project is opened.
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Bb]uild/
+/[Bb]uilds/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Made by the code editor.
+.vs/
+.idea/
+*.csproj
+*.sln
+*.user
+*.pidb
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Made by the operating system.
+.DS_Store
+Thumbs.db
