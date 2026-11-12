@@ -1,5 +1,7 @@
 # ArenaMind
 
+English | [中文](README.zh-CN.md)
+
 Training controllable, human-like NPCs for a 1v1 top-down shooter with
 reinforcement learning: PPO from scratch, self-play, and deployment in Unity.
 
